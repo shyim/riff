@@ -1,0 +1,6 @@
+{
+  "name": "acme/versioned",
+  "description": "A package with an explicit version",
+  "version": "1.0.0",
+  "license": "MIT"
+}

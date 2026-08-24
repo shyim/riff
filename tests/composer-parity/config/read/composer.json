@@ -1,0 +1,14 @@
+{
+    "description": "foo bar",
+    "config": {
+        "vendor-dir": "custom-vendor",
+        "secure-http": false
+    },
+    "repositories": {
+        "example": {
+            "type": "vcs",
+            "url": "https://example.org/repository.git"
+        },
+        "packagist.org": false
+    }
+}

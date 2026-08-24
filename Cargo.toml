@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/composer-core",
+    "crates/composer-semver",
+    "crates/composer-spdx",
+    "crates/composer-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/composer-rs/composer-rs"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.profiling]
+inherits = "release"
+debug = 1
+strip = false
