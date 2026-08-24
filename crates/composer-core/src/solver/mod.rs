@@ -27,7 +27,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use composer_rs_core::solver::{Pool, Request, Solver, Policy};
+//! use sonata_core::solver::{Pool, Request, Solver, Policy};
 //!
 //! let pool = Pool::new();
 //! // ... add packages to pool

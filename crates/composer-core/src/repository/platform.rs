@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use super::traits::{ProviderInfo, Repository, SearchMode, SearchResult};
 use crate::package::{Package, Stability};
-use composer_rs_semver::{Constraint, Operator, VersionParser};
+use sonata_semver::{Constraint, Operator, VersionParser};
 
 /// Platform repository - provides PHP version and extensions
 pub struct PlatformRepository {

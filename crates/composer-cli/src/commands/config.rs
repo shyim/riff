@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{bail, Context, Result};
-use composer_rs_core::config::ConfigLoader;
 use serde_json::{Map, Number, Value};
+use sonata_core::config::ConfigLoader;
 
 const ROOT_STRING_PROPERTIES: &[&str] = &["name", "type", "description", "homepage", "version"];
 const ROOT_LIST_PROPERTIES: &[&str] = &["keywords", "license"];
@@ -354,7 +354,7 @@ fn open_editor(path: &Path) -> Result<()> {
 
     #[cfg(unix)]
     let status = Command::new("sh")
-        .args(["-c", "$EDITOR \"$1\"", "composer-rs-editor"])
+        .args(["-c", "$EDITOR \"$1\"", "sonata-editor"])
         .arg(path)
         .env("EDITOR", editor)
         .status()?;
@@ -375,7 +375,7 @@ fn find_editor() -> Option<String> {
                 .args([
                     "-c",
                     "command -v \"$1\" >/dev/null 2>&1",
-                    "composer-rs-editor",
+                    "sonata-editor",
                     candidate,
                 ])
                 .status()

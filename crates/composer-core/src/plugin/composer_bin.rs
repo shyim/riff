@@ -143,7 +143,7 @@ impl ComposerBinPlugin {
                 std::fs::write(&namespace_composer, "{}")?;
             }
 
-            // Run composer-rs install in the namespace directory
+            // Run sonata install in the namespace directory
             if let Ok(current_exe) = std::env::current_exe() {
                 let status = Command::new(&current_exe)
                     .arg("install")

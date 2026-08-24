@@ -73,7 +73,7 @@ impl GitHubDriver {
         // Add required headers
         request = request
             .header("Accept", "application/vnd.github.v3+json")
-            .header("User-Agent", "composer-rs-composer");
+            .header("User-Agent", "sonata-composer");
 
         let response = request
             .send()

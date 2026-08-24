@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::package::{DependencyMap, Link, LinkType, Package};
-use composer_rs_semver::ConstraintInterface;
+use sonata_semver::ConstraintInterface;
 
 #[derive(Debug, Clone)]
 pub struct DependencyResult {
@@ -211,7 +211,7 @@ fn matches_constraint(
     invert: bool,
 ) -> bool {
     if let Some(filter) = filter_constraint {
-        let parser = composer_rs_semver::VersionParser;
+        let parser = sonata_semver::VersionParser;
         if let Ok(parsed) = parser.parse_constraints(link_constraint) {
             let matches = parsed.to_string() == filter.to_string();
             matches != invert
@@ -224,7 +224,7 @@ fn matches_constraint(
 }
 
 fn constraint_matches_version(constraint_str: &str, version: &str) -> bool {
-    let parser = composer_rs_semver::VersionParser;
+    let parser = sonata_semver::VersionParser;
     match parser.parse_constraints(constraint_str) {
         Ok(constraint) => match parser.parse_constraints(version) {
             Ok(ver_constraint) => constraint.to_string() == ver_constraint.to_string(),

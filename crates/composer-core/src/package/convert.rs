@@ -1,7 +1,7 @@
 //! Conversions between Package and LockedPackage types.
 
-use composer_rs_semver::VersionParser;
 use indexmap::IndexMap;
+use sonata_semver::VersionParser;
 
 use super::{
     Author, Autoload, AutoloadPath, DependencyMap, Dist, Funding, Package, Source, Support,

@@ -94,7 +94,7 @@ pub fn compute_content_hash(json_content: &str) -> String {
 /// # Examples
 ///
 /// ```
-/// use composer_rs_core::util::is_platform_package;
+/// use sonata_core::util::is_platform_package;
 ///
 /// assert!(is_platform_package("php"));
 /// assert!(is_platform_package("php-64bit"));

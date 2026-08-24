@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use composer_rs_semver::VersionParser;
+use sonata_semver::VersionParser;
 
 /// Result of root version detection
 #[derive(Debug, Clone)]

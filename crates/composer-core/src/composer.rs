@@ -289,7 +289,7 @@ impl ComposerBuilder {
             cache_dir: config
                 .cache_dir
                 .clone()
-                .unwrap_or_else(|| self.working_dir.join(".composer-rs/cache")),
+                .unwrap_or_else(|| self.working_dir.join(".sonata/cache")),
             prefer_source,
             prefer_dist,
             dry_run: self.dry_run,

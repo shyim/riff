@@ -21,7 +21,7 @@ mod unix {
         )
         .unwrap();
 
-        Command::cargo_bin("composer-rs")
+        Command::cargo_bin("sonata")
             .unwrap()
             .arg("--php")
             .arg(project.path().join("missing-php"))
@@ -48,7 +48,7 @@ mod unix {
         )
         .unwrap();
 
-        Command::cargo_bin("composer-rs")
+        Command::cargo_bin("sonata")
             .unwrap()
             .arg("--php")
             .arg(&php)

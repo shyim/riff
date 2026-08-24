@@ -21,7 +21,7 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use composer_rs_core::config::{Config, AuthConfig};
+//! use sonata_core::config::{Config, AuthConfig};
 //! use std::path::Path;
 //!
 //! // Build configuration for a project

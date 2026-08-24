@@ -6,9 +6,9 @@ use std::process::Stdio;
 use std::time::{Duration, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
-use composer_rs_core::{config::Config, Package, PlatformSnapshot, RuntimeContext};
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
+use sonata_core::{config::Config, Package, PlatformSnapshot, RuntimeContext};
 use wait_timeout::ChildExt;
 
 const PLATFORM_PROBE: &str = include_str!("platform_probe.php");
@@ -65,7 +65,7 @@ impl AppContext {
             std::env::var_os("COMPOSER_RS_PHP"),
             std::env::var_os("PHP_BINARY"),
         );
-        let composer_binary = std::env::current_exe().context("Failed to locate composer-rs")?;
+        let composer_binary = std::env::current_exe().context("Failed to locate sonata")?;
         Ok(Self {
             runtime: RuntimeContext::new(php_binary, composer_binary),
             platform: OnceCell::new(),
@@ -190,7 +190,7 @@ fn run_probe(php_binary: &Path, timeout: Duration) -> Result<ProbeOutput> {
     })?;
     if output.snapshot.php_version_id < MINIMUM_PHP_VERSION_ID {
         bail!(
-            "composer-rs requires PHP >= 7.2.5; {} reports {}",
+            "sonata requires PHP >= 7.2.5; {} reports {}",
             php_binary.display(),
             output.snapshot.php_version
         );
@@ -210,7 +210,7 @@ fn platform_cache_dir() -> Option<PathBuf> {
                 .filter(|value| !value.is_empty())
                 .map(|home| PathBuf::from(home).join(".cache"))
         })
-        .map(|directory| directory.join("composer-rs/platform"))
+        .map(|directory| directory.join("sonata/platform"))
 }
 
 fn probe_identity(php_binary: &Path) -> ProbeIdentity {
@@ -323,14 +323,14 @@ mod tests {
         assert_eq!(
             select_php_binary(
                 Some(PathBuf::from("cli")),
-                Some("composer-rs-env".into()),
+                Some("sonata-env".into()),
                 Some("php-env".into())
             ),
             PathBuf::from("cli")
         );
         assert_eq!(
-            select_php_binary(None, Some("composer-rs-env".into()), Some("php-env".into())),
-            PathBuf::from("composer-rs-env")
+            select_php_binary(None, Some("sonata-env".into()), Some("php-env".into())),
+            PathBuf::from("sonata-env")
         );
         assert_eq!(
             select_php_binary(None, None, Some("php-env".into())),

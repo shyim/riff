@@ -7,12 +7,12 @@ use std::sync::Arc;
 
 use crate::platform::AppContext;
 use anyhow::{bail, Context, Result};
-use composer_rs_core::config::{AuthConfig, Config};
-use composer_rs_core::downloader::{ArchiveExtractor, ArchiveType, FileDownloader};
-use composer_rs_core::http::HttpClient;
-use composer_rs_core::json::ComposerJson;
-use composer_rs_core::scripts::run_event_script;
 use serde::Deserialize;
+use sonata_core::config::{AuthConfig, Config};
+use sonata_core::downloader::{ArchiveExtractor, ArchiveType, FileDownloader};
+use sonata_core::http::HttpClient;
+use sonata_core::json::ComposerJson;
+use sonata_core::scripts::run_event_script;
 
 const EXIT_ERRORS: i32 = 1;
 const EXIT_UNPUSHED: i32 = 2;
@@ -131,7 +131,7 @@ pub async fn execute(args: StatusArgs, context: &AppContext) -> Result<i32> {
     let cache_dir = config
         .cache_dir
         .clone()
-        .unwrap_or_else(|| composer_rs_core::config::ConfigLoader::new(true).get_cache_dir());
+        .unwrap_or_else(|| sonata_core::config::ConfigLoader::new(true).get_cache_dir());
 
     let mut errors = BTreeMap::new();
     let mut unpushed_changes = BTreeMap::new();

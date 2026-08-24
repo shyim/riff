@@ -43,7 +43,7 @@ impl PluginPolicy {
                 && !NATIVE_PLUGINS.contains(&package.name.as_str())
             {
                 bail!(
-                    "Composer plugin {} is enabled but cannot run in composer-rs; disable it with config.allow-plugins or --no-plugins",
+                    "Composer plugin {} is enabled but cannot run in sonata; disable it with config.allow-plugins or --no-plugins",
                     package.name
                 );
             }

@@ -1,6 +1,6 @@
-# composer-rs
+# sonata
 
-`composer-rs` is a standalone Composer-compatible package manager. Dependency
+`sonata` is a standalone Composer-compatible package manager. Dependency
 resolution, repository access, installs, autoload generation, validation, and
 inspection run in Rust. A small PHP script is executed only when runtime facts
 or an `@php` project script are needed.
@@ -13,18 +13,13 @@ with an actionable error before package installation.
 
 ## Development
 
-Enter the pinned Nix development environment and build the two binary names:
+Build the workspace with a standard Rust toolchain:
 
 ```bash
-nix develop path:.
 cargo build --workspace
-./target/debug/composer-rs --help
+./target/debug/sonata --help
 ./target/debug/composer --help
 ```
-
-The flake supports `x86_64-linux`, `aarch64-linux`, and `aarch64-darwin`. It
-provides Rust, PHP CLI, Git, archive tools, `jq`, and native build dependencies.
-The checked-in `flake.lock` pins nixpkgs.
 
 Useful gates:
 
@@ -32,7 +27,6 @@ Useful gates:
 make fmt
 make test
 make release
-make flake-check
 make parity
 ```
 
@@ -53,15 +47,15 @@ such as `validate`, `config`, and `status` do not launch PHP unless a configured
 project script explicitly uses `@php`.
 
 ```bash
-composer-rs --php /opt/php/bin/php install
-COMPOSER_RS_PHP=/opt/php/bin/php composer-rs check-platform-reqs
-composer-rs show --platform
+sonata --php /opt/php/bin/php install
+COMPOSER_RS_PHP=/opt/php/bin/php sonata check-platform-reqs
+sonata show --platform
 ```
 
 `config.platform` string values replace or add virtual packages, while `false`
 disables an extension or library package. Disabling `php` itself is rejected.
-Platform snapshots are cached under `$XDG_CACHE_HOME/composer-rs` (or
-`$HOME/.cache/composer-rs`) and invalidated when PHP, its ini files, scan
+Platform snapshots are cached under `$XDG_CACHE_HOME/sonata` (or
+`$HOME/.cache/sonata`) and invalidated when PHP, its ini files, scan
 directories, or relevant environment variables change. Set
 `COMPOSER_RS_NO_PLATFORM_CACHE=1` to force a fresh probe.
 

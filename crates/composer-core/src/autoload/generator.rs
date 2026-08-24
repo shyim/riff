@@ -10,7 +10,7 @@ use regex::Regex;
 use crate::json::LockedPackage;
 use crate::package::Autoload;
 use crate::Result;
-use composer_rs_semver::VersionParser;
+use sonata_semver::VersionParser;
 
 use super::classmap::ClassMapGenerator;
 

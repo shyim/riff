@@ -1,14 +1,14 @@
 use anyhow::{Context, Result};
 use colored::Colorize;
-use composer_rs_core::cache::Cache;
-use composer_rs_core::config::Config;
-use composer_rs_core::json::{ComposerLock, LockedPackage};
-use composer_rs_core::repository::InstalledRepository;
-use composer_rs_core::util::canonical_package_name;
-use composer_rs_core::Repository;
-use composer_rs_semver::VersionParser;
 use foldhash::{HashMap, HashMapExt, HashSet};
 use serde::{Deserialize, Serialize};
+use sonata_core::cache::Cache;
+use sonata_core::config::Config;
+use sonata_core::json::{ComposerLock, LockedPackage};
+use sonata_core::repository::InstalledRepository;
+use sonata_core::util::canonical_package_name;
+use sonata_core::Repository;
+use sonata_semver::VersionParser;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
@@ -520,7 +520,7 @@ fn output_summary(response: &SecurityAdvisoriesResponse) -> Result<()> {
             "Found {} security vulnerability advisor{} affecting {} package{}.",
             total_advisories, plurality, affected_packages, pkg_plurality
         );
-        eprintln!("Run \"composer-rs audit\" for a full list of advisories.");
+        eprintln!("Run \"sonata audit\" for a full list of advisories.");
     } else {
         eprintln!("No security vulnerability advisories found.");
     }

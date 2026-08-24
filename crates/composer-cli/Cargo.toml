@@ -1,17 +1,17 @@
 [package]
-name = "composer-rs-cli"
+name = "sonata"
 description = "Fast, standalone Composer-compatible package manager"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [lib]
-name = "composer_rs_cli"
+name = "sonata"
 path = "src/lib.rs"
 
 [[bin]]
-name = "composer-rs"
-path = "src/bin/composer-rs.rs"
+name = "sonata"
+path = "src/bin/sonata.rs"
 
 [[bin]]
 name = "composer"
@@ -22,8 +22,8 @@ default = ["mimalloc"]
 mimalloc = ["dep:mimalloc"]
 
 [dependencies]
-composer-rs-core = { path = "../composer-core" }
-composer-rs-semver = { path = "../composer-semver" }
+sonata-core = { path = "../composer-core" }
+sonata-semver = { path = "../composer-semver" }
 anyhow = "1"
 colored = "2"
 console = "0.15"

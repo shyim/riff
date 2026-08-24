@@ -17,7 +17,7 @@ This module provides a filesystem-based caching system for Composer package mana
 ### Basic Example
 
 ```rust
-use composer_rs_core::cache::Cache;
+use sonata_core::cache::Cache;
 use std::path::PathBuf;
 
 // Create a cache instance
@@ -253,13 +253,13 @@ Cache operations never panic. Failed operations either:
 Run tests with:
 
 ```bash
-cargo test -p composer-rs-core cache::
+cargo test -p sonata-core cache::
 ```
 
 Run the demo example:
 
 ```bash
-cargo run -p composer-rs-core --example cache_demo
+cargo run -p sonata-core --example cache_demo
 ```
 
 ## License

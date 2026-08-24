@@ -4,11 +4,11 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 composer_dir=${COMPOSER_SRC_DIR:-$(cd "$repo_root/.." && pwd)/composer}
 php_bin=${PHP_BIN:-$(command -v php || true)}
-composer_rs_bin=${COMPOSER_RS_BIN:-$repo_root/target/debug/composer-rs}
+composer_rs_bin=${COMPOSER_RS_BIN:-$repo_root/target/debug/sonata}
 export COMPOSER_RS_PHP="$php_bin"
 
 if [[ ! -x "$php_bin" || ! -x "$composer_rs_bin" ]]; then
-    echo "Build PHP and composer-rs before running core differential tests." >&2
+    echo "Build PHP and sonata before running core differential tests." >&2
     exit 1
 fi
 if [[ ! -f "$composer_dir/bin/composer" || ! -f "$composer_dir/vendor/autoload.php" ]]; then
@@ -38,7 +38,7 @@ run_pair() {
     local command=$2
     shift 2
     local reference_output=$tmp_dir/$case_name-reference.out
-    local candidate_output=$tmp_dir/$case_name-composer-rs.out
+    local candidate_output=$tmp_dir/$case_name-sonata.out
     local reference_code candidate_code
     local -a reference_flags=(--no-ansi --no-interaction --no-progress)
     local -a candidate_flags=(--no-ansi --no-interaction --no-progress --no-audit)
@@ -58,10 +58,10 @@ run_pair() {
     set -e
 
     if [[ $reference_code -ne $candidate_code ]]; then
-        record_failure "$case_name" "exit code: Composer=$reference_code composer-rs=$candidate_code"
+        record_failure "$case_name" "exit code: Composer=$reference_code sonata=$candidate_code"
         printf '%s\n' '--- Composer output ---' >&2
         sed -n '1,100p' "$reference_output" >&2
-        printf '%s\n' '--- composer-rs output ---' >&2
+        printf '%s\n' '--- sonata output ---' >&2
         sed -n '1,100p' "$candidate_output" >&2
         return 1
     fi
@@ -79,7 +79,7 @@ compare_json_projection() {
     local candidate_file=$3
     local filter=$4
     local reference_json=$tmp_dir/$case_name-reference.json
-    local candidate_json=$tmp_dir/$case_name-composer-rs.json
+    local candidate_json=$tmp_dir/$case_name-sonata.json
 
     if [[ ! -f "$reference_file" || ! -f "$candidate_file" ]]; then
         record_failure "$case_name" "required JSON file is missing"
@@ -180,7 +180,7 @@ if [[ $reference_autoload_code -ne $candidate_autoload_code \
     || "$reference_autoload" != "$candidate_autoload" \
     || "$candidate_autoload" != "base-app-1.0" ]]; then
     record_failure autoload-runtime \
-        "Composer[$reference_autoload_code]=$reference_autoload composer-rs[$candidate_autoload_code]=$candidate_autoload"
+        "Composer[$reference_autoload_code]=$reference_autoload sonata[$candidate_autoload_code]=$candidate_autoload"
 else
     printf 'PASS %-32s %s\n' autoload-runtime "$candidate_autoload"
 fi

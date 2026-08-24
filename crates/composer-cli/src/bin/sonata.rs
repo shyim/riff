@@ -3,5 +3,5 @@
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() {
-    std::process::exit(composer_rs_cli::run());
+    std::process::exit(sonata::run());
 }

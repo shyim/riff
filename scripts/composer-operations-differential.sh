@@ -4,11 +4,11 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 composer_dir=${COMPOSER_SRC_DIR:-$(cd "$repo_root/.." && pwd)/composer}
 php_bin=${PHP_BIN:-$(command -v php || true)}
-composer_rs_bin=${COMPOSER_RS_BIN:-$repo_root/target/debug/composer-rs}
+composer_rs_bin=${COMPOSER_RS_BIN:-$repo_root/target/debug/sonata}
 export COMPOSER_RS_PHP="$php_bin"
 
 if [[ ! -x "$php_bin" || ! -x "$composer_rs_bin" || ! -f "$composer_dir/vendor/autoload.php" ]]; then
-    echo "Build PHP, composer-rs, and the Composer reference before running operation differential tests." >&2
+    echo "Build PHP, sonata, and the Composer reference before running operation differential tests." >&2
     exit 1
 fi
 if ! command -v jq >/dev/null 2>&1; then
@@ -86,7 +86,7 @@ run_pair() {
     local command=$2
     shift 2
     local reference_output=$tmp_dir/$case_name-reference.out
-    local candidate_output=$tmp_dir/$case_name-composer-rs.out
+    local candidate_output=$tmp_dir/$case_name-sonata.out
 
     set +e
     COMPOSER_HOME="$tmp_dir/home-reference" "$php_bin" "$composer_dir/bin/composer" \
@@ -94,16 +94,16 @@ run_pair() {
         > "$reference_output" 2> "$tmp_dir/$case_name-reference.err"
     reference_code=$?
     COMPOSER_HOME="$tmp_dir/home-candidate" "$composer_rs_bin" "$command" -d "$candidate_dir" "$@" \
-        > "$candidate_output" 2> "$tmp_dir/$case_name-composer-rs.err"
+        > "$candidate_output" 2> "$tmp_dir/$case_name-sonata.err"
     candidate_code=$?
     set -e
 
     if [[ $reference_code -ne 0 || $candidate_code -ne 0 ]]; then
         printf '%s\n' '--- Composer output ---' >&2
         cat "$reference_output" "$tmp_dir/$case_name-reference.err" >&2
-        printf '%s\n' '--- composer-rs output ---' >&2
-        cat "$candidate_output" "$tmp_dir/$case_name-composer-rs.err" >&2
-        fail "$case_name" "exit code: Composer=$reference_code composer-rs=$candidate_code"
+        printf '%s\n' '--- sonata output ---' >&2
+        cat "$candidate_output" "$tmp_dir/$case_name-sonata.err" >&2
+        fail "$case_name" "exit code: Composer=$reference_code sonata=$candidate_code"
     fi
     printf 'PASS %-32s exit=0\n' "$case_name"
 }
@@ -120,13 +120,13 @@ printf 'PASS %-32s shell-safe arguments\n' run-arguments-boundaries
 
 run_pair show-names show --name-only
 sort "$tmp_dir/show-names-reference.out" > "$tmp_dir/show-names-reference.sorted"
-sort "$tmp_dir/show-names-composer-rs.out" > "$tmp_dir/show-names-composer-rs.sorted"
-diff -u "$tmp_dir/show-names-reference.sorted" "$tmp_dir/show-names-composer-rs.sorted" \
+sort "$tmp_dir/show-names-sonata.out" > "$tmp_dir/show-names-sonata.sorted"
+diff -u "$tmp_dir/show-names-reference.sorted" "$tmp_dir/show-names-sonata.sorted" \
     || fail show-names-output "installed names differ"
 printf 'PASS %-32s installed names\n' show-names-output
 
 run_pair why-transitive why fixture/base
-for output in "$tmp_dir/why-transitive-reference.out" "$tmp_dir/why-transitive-composer-rs.out"; do
+for output in "$tmp_dir/why-transitive-reference.out" "$tmp_dir/why-transitive-sonata.out"; do
     grep -q 'fixture/app' "$output" || fail why-transitive-output "fixture/app missing"
     grep -q '\^1.0' "$output" || fail why-transitive-output "constraint missing"
 done
@@ -137,13 +137,13 @@ for project in "$reference_dir" "$candidate_dir"; do
 done
 run_pair show-locked show --locked --name-only
 sort "$tmp_dir/show-locked-reference.out" > "$tmp_dir/show-locked-reference.sorted"
-sort "$tmp_dir/show-locked-composer-rs.out" > "$tmp_dir/show-locked-composer-rs.sorted"
-diff -u "$tmp_dir/show-locked-reference.sorted" "$tmp_dir/show-locked-composer-rs.sorted" \
+sort "$tmp_dir/show-locked-sonata.out" > "$tmp_dir/show-locked-sonata.sorted"
+diff -u "$tmp_dir/show-locked-reference.sorted" "$tmp_dir/show-locked-sonata.sorted" \
     || fail show-locked-output "locked names differ"
 printf 'PASS %-32s lock works without vendor\n' show-locked-output
 
 run_pair why-locked why --locked fixture/base
-for output in "$tmp_dir/why-locked-reference.out" "$tmp_dir/why-locked-composer-rs.out"; do
+for output in "$tmp_dir/why-locked-reference.out" "$tmp_dir/why-locked-sonata.out"; do
     grep -q 'fixture/app' "$output" || fail why-locked-output "fixture/app missing"
 done
 printf 'PASS %-32s lock graph works without vendor\n' why-locked-output
@@ -164,8 +164,8 @@ run_pair outdated-json outdated --format=json
 jq -S '.installed | sort_by(.name) | map({name, version, latest, status: .["latest-status"]})' \
     "$tmp_dir/outdated-json-reference.out" > "$tmp_dir/outdated-json-reference.projected"
 jq -S '.installed | sort_by(.name) | map({name, version, latest, status: .["latest-status"]})' \
-    "$tmp_dir/outdated-json-composer-rs.out" > "$tmp_dir/outdated-json-composer-rs.projected"
-diff -u "$tmp_dir/outdated-json-reference.projected" "$tmp_dir/outdated-json-composer-rs.projected" \
+    "$tmp_dir/outdated-json-sonata.out" > "$tmp_dir/outdated-json-sonata.projected"
+diff -u "$tmp_dir/outdated-json-reference.projected" "$tmp_dir/outdated-json-sonata.projected" \
     || fail outdated-json-output "outdated package data differs"
 printf 'PASS %-32s versions and compatibility\n' outdated-json-output
 
@@ -177,18 +177,18 @@ COMPOSER_HOME="$tmp_dir/home-candidate" "$composer_rs_bin" outdated --strict -d 
 candidate_code=$?
 set -e
 [[ $reference_code -eq 1 && $candidate_code -eq 1 ]] \
-    || fail outdated-strict "expected exit 1, Composer=$reference_code composer-rs=$candidate_code"
+    || fail outdated-strict "expected exit 1, Composer=$reference_code sonata=$candidate_code"
 printf 'PASS %-32s exit=1\n' outdated-strict
 
 run_pair outdated-major outdated --major-only --format=json
 [[ $(jq -r '.installed | map(.name) | join(",")' "$tmp_dir/outdated-major-reference.out") == 'fixture/tool' \
-    && $(jq -r '.installed | map(.name) | join(",")' "$tmp_dir/outdated-major-composer-rs.out") == 'fixture/tool' ]] \
+    && $(jq -r '.installed | map(.name) | join(",")' "$tmp_dir/outdated-major-sonata.out") == 'fixture/tool' ]] \
     || fail outdated-major-output "major filter differs"
 printf 'PASS %-32s fixture/tool\n' outdated-major-output
 
 run_pair outdated-ignore outdated --ignore fixture/tool --format=json
 [[ $(jq -r '.installed | map(.name) | join(",")' "$tmp_dir/outdated-ignore-reference.out") == 'fixture/app' \
-    && $(jq -r '.installed | map(.name) | join(",")' "$tmp_dir/outdated-ignore-composer-rs.out") == 'fixture/app' ]] \
+    && $(jq -r '.installed | map(.name) | join(",")' "$tmp_dir/outdated-ignore-sonata.out") == 'fixture/app' ]] \
     || fail outdated-ignore-output "ignore filter differs"
 printf 'PASS %-32s fixture/app\n' outdated-ignore-output
 

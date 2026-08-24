@@ -1,5 +1,5 @@
 [package]
-name = "composer-rs-core"
+name = "sonata-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,8 +7,8 @@ description = "Composer-compatible PHP package manager implementation"
 
 [dependencies]
 # Internal crates
-composer-rs-semver = { path = "../composer-semver" }
-composer-rs-spdx = { path = "../composer-spdx" }
+sonata-semver = { path = "../composer-semver" }
+sonata-spdx = { path = "../composer-spdx" }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }

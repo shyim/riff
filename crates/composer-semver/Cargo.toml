@@ -1,5 +1,5 @@
 [package]
-name = "composer-rs-semver"
+name = "sonata-semver"
 description = "Semantic versioning library compatible with Composer/semver"
 version.workspace = true
 edition.workspace = true

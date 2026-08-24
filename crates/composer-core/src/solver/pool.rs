@@ -3,9 +3,9 @@ use std::sync::Arc;
 
 use crate::package::{AliasPackage, Package, Stability};
 use crate::util::canonical_package_name;
-use composer_rs_semver::{ConstraintInterface, NormalizedVersion, VersionParser};
 use foldhash::{HashMap, HashMapExt};
 use hashbrown::HashMap as BorrowedKeyMap;
+use sonata_semver::{ConstraintInterface, NormalizedVersion, VersionParser};
 
 /// A literal represents a package decision in the SAT solver.
 /// Positive literals mean "install package", negative means "don't install".

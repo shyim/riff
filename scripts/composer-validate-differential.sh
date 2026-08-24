@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 composer_dir=${COMPOSER_SRC_DIR:-$(cd "$repo_root/.." && pwd)/composer}
 php_bin=${PHP_BIN:-$(command -v php || true)}
-composer_rs_bin=${COMPOSER_RS_BIN:-$repo_root/target/debug/composer-rs}
+composer_rs_bin=${COMPOSER_RS_BIN:-$repo_root/target/debug/sonata}
 export COMPOSER_RS_PHP="$php_bin"
 fixtures=$repo_root/tests/composer-parity/validate
 
@@ -13,7 +13,7 @@ if [[ ! -x "$php_bin" ]]; then
     exit 1
 fi
 if [[ ! -x "$composer_rs_bin" ]]; then
-    echo "Missing composer-rs binary at $composer_rs_bin; run 'make build' first." >&2
+    echo "Missing sonata binary at $composer_rs_bin; run 'make build' first." >&2
     exit 1
 fi
 if [[ ! -f "$composer_dir/bin/composer" || ! -f "$composer_dir/vendor/autoload.php" ]]; then
@@ -53,9 +53,9 @@ run_directory_case() {
     local case_dir=$2
     shift 2
     local reference_output=$tmp_dir/$case_name-reference.out
-    local candidate_output=$tmp_dir/$case_name-composer-rs.out
+    local candidate_output=$tmp_dir/$case_name-sonata.out
     local reference_normalized=$tmp_dir/$case_name-reference.normalized
-    local candidate_normalized=$tmp_dir/$case_name-composer-rs.normalized
+    local candidate_normalized=$tmp_dir/$case_name-sonata.normalized
     local reference_code candidate_code
 
     set +e
@@ -70,7 +70,7 @@ run_directory_case() {
     normalize "$case_name" "$candidate_output" >"$candidate_normalized"
 
     if [[ $reference_code -ne $candidate_code ]]; then
-        printf 'FAIL %-24s exit code: Composer=%s composer-rs=%s\n' \
+        printf 'FAIL %-24s exit code: Composer=%s sonata=%s\n' \
             "$case_name $*" "$reference_code" "$candidate_code" >&2
         failures=$((failures + 1))
         return

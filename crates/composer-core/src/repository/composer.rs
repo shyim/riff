@@ -17,7 +17,7 @@ use super::traits::{ProviderInfo, Repository, SearchMode, SearchResult};
 use crate::cache::{CacheMetadata, RepoCache};
 use crate::config::AuthConfig;
 use crate::package::{Autoload, AutoloadPath, Dist, Package, Source, Stability};
-use composer_rs_semver::{Constraint, Operator, VersionParser};
+use sonata_semver::{Constraint, Operator, VersionParser};
 
 /// Default TTL for cached metadata (10 minutes, matching Composer)
 const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(600);
@@ -168,7 +168,7 @@ impl ComposerRepository {
             deferred_metadata: StdMutex::new(Vec::new()),
             loading_locks: RwLock::new(HashMap::new()),
             client: reqwest::Client::builder()
-                .user_agent("composer-rs-composer/0.1.0")
+                .user_agent("sonata-composer/0.1.0")
                 .build()
                 .unwrap_or_default(),
             file_cache: None,

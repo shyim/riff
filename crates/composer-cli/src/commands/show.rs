@@ -7,13 +7,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::platform::AppContext;
-use composer_rs_core::{
+use sonata_core::{
     config::Config,
     is_platform_package,
     json::{ComposerJson, ComposerLock},
     ComposerBuilder, Repository, RepositoryManager,
 };
-use composer_rs_semver::VersionParser;
+use sonata_semver::VersionParser;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum UpdateType {
@@ -68,7 +68,7 @@ fn determine_update_type(current: &str, latest: &str) -> UpdateType {
 }
 
 struct PackageWithLatest {
-    package: Arc<composer_rs_core::Package>,
+    package: Arc<sonata_core::Package>,
     latest_version: Option<String>,
     update_type: UpdateType,
 }
@@ -221,7 +221,7 @@ pub async fn execute(args: ShowArgs, context: &AppContext) -> Result<i32> {
                         "homepage": null,
                         "source": null,
                         "version": package.pretty_version(),
-                        "description": "Platform package provided by composer-rs",
+                        "description": "Platform package provided by sonata",
                         "abandoned": false,
                     })
                 })
@@ -239,7 +239,7 @@ pub async fn execute(args: ShowArgs, context: &AppContext) -> Result<i32> {
     }
 
     let vendor_dir = working_dir.join(&config.vendor_dir);
-    let installed_repo = Arc::new(composer_rs_core::repository::InstalledRepository::new(
+    let installed_repo = Arc::new(sonata_core::repository::InstalledRepository::new(
         vendor_dir.clone(),
     ));
     installed_repo.load().await.ok();
@@ -255,7 +255,7 @@ pub async fn execute(args: ShowArgs, context: &AppContext) -> Result<i32> {
             } else {
                 locked.packages_dev.iter()
             })
-            .map(|package| Arc::new(composer_rs_core::Package::from(package)))
+            .map(|package| Arc::new(sonata_core::Package::from(package)))
             .collect();
     } else if args.no_dev {
         let dev_packages: HashSet<_> = lock
@@ -397,7 +397,7 @@ fn print_root_package_info(composer_json: &ComposerJson, format: &str) -> Result
 }
 
 fn show_single_package(
-    packages: &[Arc<composer_rs_core::Package>],
+    packages: &[Arc<sonata_core::Package>],
     name: &str,
     _version: Option<&str>,
     args: &ShowArgs,
@@ -440,7 +440,7 @@ fn show_single_package(
     Ok(())
 }
 
-fn print_package_info(package: &composer_rs_core::Package) -> Result<()> {
+fn print_package_info(package: &sonata_core::Package) -> Result<()> {
     println!("name     : {}", package.name);
     if let Some(desc) = &package.description {
         println!("descrip. : {}", desc);
@@ -503,7 +503,7 @@ fn print_package_info(package: &composer_rs_core::Package) -> Result<()> {
     Ok(())
 }
 
-fn print_package_json(package: &composer_rs_core::Package) -> Result<()> {
+fn print_package_json(package: &sonata_core::Package) -> Result<()> {
     let abandoned_value = package.abandoned.as_ref().map(|a| match a.replacement() {
         Some(pkg) => serde_json::json!(pkg),
         None => serde_json::json!(true),
@@ -526,7 +526,7 @@ fn print_package_json(package: &composer_rs_core::Package) -> Result<()> {
 }
 
 async fn fetch_latest_versions(
-    packages: &[Arc<composer_rs_core::Package>],
+    packages: &[Arc<sonata_core::Package>],
     repository_manager: &RepositoryManager,
 ) -> HashMap<String, String> {
     let mut latest_versions = HashMap::new();
@@ -545,7 +545,7 @@ async fn fetch_latest_versions(
     latest_versions
 }
 
-fn find_latest_stable_version(packages: &[Arc<composer_rs_core::Package>]) -> Option<String> {
+fn find_latest_stable_version(packages: &[Arc<sonata_core::Package>]) -> Option<String> {
     let parser = VersionParser::new();
 
     let mut stable_versions: Vec<_> = packages
@@ -608,7 +608,7 @@ fn strip_version_prefix(version: &str) -> &str {
 }
 
 async fn list_packages_with_latest(
-    packages: &[Arc<composer_rs_core::Package>],
+    packages: &[Arc<sonata_core::Package>],
     filter: Option<&str>,
     composer_json: &ComposerJson,
     args: &ShowArgs,
@@ -896,8 +896,8 @@ fn print_packages_list(packages: &[&PackageWithLatest], args: &ShowArgs) {
 }
 
 fn show_tree_single(
-    package: &Arc<composer_rs_core::Package>,
-    all_packages: &[Arc<composer_rs_core::Package>],
+    package: &Arc<sonata_core::Package>,
+    all_packages: &[Arc<sonata_core::Package>],
 ) -> Result<()> {
     let version = package
         .pretty_version
@@ -915,7 +915,7 @@ fn show_tree_single(
 }
 
 fn show_tree_all(
-    packages: &[Arc<composer_rs_core::Package>],
+    packages: &[Arc<sonata_core::Package>],
     composer_json: &ComposerJson,
 ) -> Result<()> {
     let root_requires: HashSet<String> = composer_json
@@ -949,8 +949,8 @@ fn show_tree_all(
 }
 
 fn print_dependencies_tree(
-    requires: &composer_rs_core::package::DependencyMap,
-    all_packages: &[Arc<composer_rs_core::Package>],
+    requires: &sonata_core::package::DependencyMap,
+    all_packages: &[Arc<sonata_core::Package>],
     prefix: &str,
     visited: &mut HashSet<String>,
 ) {

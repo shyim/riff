@@ -110,7 +110,7 @@ pub enum PlatformCheck {
 ### Basic Usage
 
 ```rust
-use composer_rs_core::config::Config;
+use sonata_core::config::Config;
 
 // Create with defaults
 let config = Config::default();
@@ -122,7 +122,7 @@ let config = Config::with_base_dir("/path/to/project");
 ### Loading Configuration
 
 ```rust
-use composer_rs_core::config::Config;
+use sonata_core::config::Config;
 use std::path::Path;
 
 // Build configuration from all sources
@@ -145,7 +145,7 @@ if let Some(source) = config.get_source("vendor-dir") {
 ### Configuration Loader
 
 ```rust
-use composer_rs_core::config::ConfigLoader;
+use sonata_core::config::ConfigLoader;
 
 let loader = ConfigLoader::new(true);
 
@@ -304,11 +304,11 @@ The configuration system includes comprehensive tests:
 
 ```bash
 # Run all config tests
-cargo test -p composer-rs-core --lib config
+cargo test -p sonata-core --lib config
 
 # Run specific test module
-cargo test -p composer-rs-core config::config::tests
-cargo test -p composer-rs-core config::source::tests
+cargo test -p sonata-core config::config::tests
+cargo test -p sonata-core config::source::tests
 ```
 
 ## Examples

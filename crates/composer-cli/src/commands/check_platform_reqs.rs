@@ -1,14 +1,14 @@
 use anyhow::{Context, Result};
-use composer_rs_core::{
+use indexmap::IndexMap;
+use serde::Serialize;
+use sonata_core::{
     config::Config,
     is_platform_package,
     json::{ComposerJson, ComposerLock, LockedPackage},
     package::Package,
     repository::{InstalledRepository, Repository},
 };
-use composer_rs_semver::VersionParser;
-use indexmap::IndexMap;
-use serde::Serialize;
+use sonata_semver::VersionParser;
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -312,7 +312,7 @@ fn add_requirements(
 fn collect_candidates(
     composer: &ComposerJson,
     packages: &[PackageMetadata],
-    platform_packages: Vec<composer_rs_core::Package>,
+    platform_packages: Vec<sonata_core::Package>,
 ) -> BTreeMap<String, Vec<Candidate>> {
     let mut candidates: BTreeMap<String, Vec<Candidate>> = BTreeMap::new();
 

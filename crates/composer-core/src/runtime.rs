@@ -20,8 +20,7 @@ impl Default for RuntimeContext {
     fn default() -> Self {
         Self {
             php_binary: PathBuf::from("php"),
-            composer_binary: std::env::current_exe()
-                .unwrap_or_else(|_| PathBuf::from("composer-rs")),
+            composer_binary: std::env::current_exe().unwrap_or_else(|_| PathBuf::from("sonata")),
         }
     }
 }

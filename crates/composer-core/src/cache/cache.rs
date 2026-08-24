@@ -44,7 +44,7 @@ impl Cache {
     /// # Example
     /// ```no_run
     /// use std::path::PathBuf;
-    /// use composer_rs_core::cache::Cache;
+    /// use sonata_core::cache::Cache;
     ///
     /// let cache = Cache::new(PathBuf::from("/tmp/composer-cache"));
     /// ```

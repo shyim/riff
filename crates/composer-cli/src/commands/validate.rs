@@ -2,15 +2,15 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result};
-use composer_rs_core::{
+use serde_json::Value;
+use sonata_core::{
     compute_content_hash, is_platform_package,
     json::{
         validate_parsed_composer_manifest, ComposerJson, ComposerLock, LockedPackage,
         ManifestValidation, ManifestValidationOptions,
     },
 };
-use composer_rs_semver::VersionParser;
-use serde_json::Value;
+use sonata_semver::VersionParser;
 
 #[derive(usage_rs::Args, Debug)]
 pub struct ValidateArgs {

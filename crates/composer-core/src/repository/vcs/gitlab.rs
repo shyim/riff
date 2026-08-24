@@ -78,7 +78,7 @@ impl GitLabDriver {
         // Add required headers
         request = request
             .header("Accept", "application/json")
-            .header("User-Agent", "composer-rs-composer");
+            .header("User-Agent", "sonata-composer");
 
         let response = request
             .send()

@@ -1,31 +1,22 @@
 PHP_BIN ?= $(shell command -v php 2>/dev/null)
 COMPOSER_SRC_DIR ?= /workspace/composer
-COMPOSER_RS_BIN ?= $(CURDIR)/target/debug/composer-rs
+COMPOSER_RS_BIN ?= $(CURDIR)/target/debug/sonata
 
-ifdef IN_NIX_SHELL
-DEV_RUN := bash -e -o pipefail -c
-else
-DEV_RUN := nix develop path:$(CURDIR) --command bash -e -o pipefail -c
-endif
-
-.PHONY: build release fmt test check flake-check composer-reference parity
+.PHONY: build release fmt test check composer-reference parity
 
 build:
-	@$(DEV_RUN) 'cargo build --workspace'
+	@cargo build --workspace
 
 release:
-	@$(DEV_RUN) 'cargo build --release --workspace'
+	@cargo build --release --workspace
 
 fmt:
-	@$(DEV_RUN) 'cargo fmt --all --check'
+	@cargo fmt --all --check
 
 test:
-	@$(DEV_RUN) 'cargo test --workspace'
+	@cargo test --workspace
 
 check: fmt test release
-
-flake-check:
-	@nix flake check path:$(CURDIR)
 
 composer-reference: build
 	@test -f "$(COMPOSER_SRC_DIR)/bin/composer" || { echo "Missing Composer checkout at $(COMPOSER_SRC_DIR)" >&2; exit 1; }

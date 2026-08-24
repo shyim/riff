@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use composer_rs_core::{
+use sonata_core::{
     config::Config,
     find_packages_with_replacers_and_providers, get_dependents, is_platform_package,
     json::{ComposerJson, ComposerLock},
@@ -63,7 +63,7 @@ pub async fn execute(args: WhyArgs, inverted: bool) -> Result<i32> {
     let config = Config::build(Some(&working_dir), true)?;
 
     let vendor_dir = working_dir.join(&config.vendor_dir);
-    let installed_repo = Arc::new(composer_rs_core::repository::InstalledRepository::new(
+    let installed_repo = Arc::new(sonata_core::repository::InstalledRepository::new(
         vendor_dir,
     ));
     installed_repo.load().await.ok();
@@ -77,13 +77,13 @@ pub async fn execute(args: WhyArgs, inverted: bool) -> Result<i32> {
             .packages
             .iter()
             .chain(lock.packages_dev.iter())
-            .map(|package| Arc::new(composer_rs_core::Package::from(package)))
+            .map(|package| Arc::new(sonata_core::Package::from(package)))
             .collect();
     }
 
     let has_dependency_packages = !installed_packages.is_empty();
 
-    let root_package = composer_rs_core::Package {
+    let root_package = sonata_core::Package {
         name: composer_json
             .name
             .clone()
@@ -118,7 +118,7 @@ pub async fn execute(args: WhyArgs, inverted: bool) -> Result<i32> {
     let constraint_str = args.constraint.as_deref().unwrap_or("*");
 
     let constraint = if constraint_str != "*" {
-        let parser = composer_rs_semver::VersionParser;
+        let parser = sonata_semver::VersionParser;
         match parser.parse_constraints(constraint_str) {
             Ok(c) => Some(c),
             Err(e) => {
@@ -151,7 +151,7 @@ pub async fn execute(args: WhyArgs, inverted: bool) -> Result<i32> {
     if matched_package.is_some() && inverted {
         if let Some(pkg) = matched_package {
             println!(
-                "Package \"{}\" {} is already installed! To find out why, run `composer-rs why {}`",
+                "Package \"{}\" {} is already installed! To find out why, run `sonata why {}`",
                 needle,
                 pkg.pretty_version.as_deref().unwrap_or(&pkg.version),
                 needle
@@ -220,7 +220,7 @@ pub async fn execute(args: WhyArgs, inverted: bool) -> Result<i32> {
         }
 
         eprintln!(
-            "\nNot finding what you were looking for? Try calling `composer-rs {} \"{}:{}\" --dry-run` to get another view on the problem.",
+            "\nNot finding what you were looking for? Try calling `sonata {} \"{}:{}\" --dry-run` to get another view on the problem.",
             command, needle, constraint_str
         );
     }
@@ -288,7 +288,7 @@ fn print_table(results: &[DependencyResult]) {
     }
 }
 
-fn print_tree(results: &[DependencyResult], root: &Arc<composer_rs_core::Package>) {
+fn print_tree(results: &[DependencyResult], root: &Arc<sonata_core::Package>) {
     println!(
         "{} {}",
         root.name,

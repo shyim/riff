@@ -83,7 +83,7 @@ impl BitbucketDriver {
         // Add required headers
         request = request
             .header("Accept", "application/json")
-            .header("User-Agent", "composer-rs-composer");
+            .header("User-Agent", "sonata-composer");
 
         let response = request
             .send()
@@ -134,7 +134,7 @@ impl BitbucketDriver {
             request = request.basic_auth(username, Some(password));
         }
 
-        request = request.header("User-Agent", "composer-rs-composer");
+        request = request.header("User-Agent", "sonata-composer");
 
         let response = request
             .send()
@@ -199,7 +199,7 @@ impl VcsDriver for BitbucketDriver {
 
             request = request
                 .header("Accept", "application/json")
-                .header("User-Agent", "composer-rs-composer");
+                .header("User-Agent", "sonata-composer");
 
             let response: serde_json::Value = request
                 .send()
@@ -255,7 +255,7 @@ impl VcsDriver for BitbucketDriver {
 
             request = request
                 .header("Accept", "application/json")
-                .header("User-Agent", "composer-rs-composer");
+                .header("User-Agent", "sonata-composer");
 
             let response: serde_json::Value = request
                 .send()

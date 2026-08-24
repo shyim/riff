@@ -4,11 +4,11 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 composer_dir=${COMPOSER_SRC_DIR:-$(cd "$repo_root/.." && pwd)/composer}
 php_bin=${PHP_BIN:-$(command -v php || true)}
-composer_rs_bin=${COMPOSER_RS_BIN:-$repo_root/target/debug/composer-rs}
+composer_rs_bin=${COMPOSER_RS_BIN:-$repo_root/target/debug/sonata}
 export COMPOSER_RS_PHP="$php_bin"
 
 if [[ ! -x "$php_bin" || ! -x "$composer_rs_bin" || ! -f "$composer_dir/vendor/autoload.php" ]]; then
-    echo "Build PHP, composer-rs, and the Composer reference before running mutation differential tests." >&2
+    echo "Build PHP, sonata, and the Composer reference before running mutation differential tests." >&2
     exit 1
 fi
 if ! command -v jq >/dev/null 2>&1; then
@@ -99,7 +99,7 @@ run_pair() {
     local command=$2
     shift 2
     local reference_output=$tmp_dir/$case_name-reference.out
-    local candidate_output=$tmp_dir/$case_name-composer-rs.out
+    local candidate_output=$tmp_dir/$case_name-sonata.out
     local -a reference_flags=(--no-ansi --no-interaction)
     if [[ $command == require || $command == remove ]]; then
         reference_flags+=(--no-progress --no-audit)
@@ -118,9 +118,9 @@ run_pair() {
     if [[ $reference_code -ne 0 || $candidate_code -ne 0 ]]; then
         printf '%s\n' '--- Composer output ---' >&2
         sed -n '1,120p' "$reference_output" >&2
-        printf '%s\n' '--- composer-rs output ---' >&2
+        printf '%s\n' '--- sonata output ---' >&2
         sed -n '1,120p' "$candidate_output" >&2
-        fail "$case_name" "exit code: Composer=$reference_code composer-rs=$candidate_code"
+        fail "$case_name" "exit code: Composer=$reference_code sonata=$candidate_code"
     fi
     printf 'PASS %-32s exit=0\n' "$case_name"
 }
@@ -133,8 +133,8 @@ compare_projection() {
     local candidate_file=$candidate_dir/$relative
     [[ -f $reference_file && -f $candidate_file ]] || fail "$case_name" "$relative is missing"
     jq -S "$filter" "$reference_file" > "$tmp_dir/$case_name-reference.json"
-    jq -S "$filter" "$candidate_file" > "$tmp_dir/$case_name-composer-rs.json"
-    diff -u "$tmp_dir/$case_name-reference.json" "$tmp_dir/$case_name-composer-rs.json" \
+    jq -S "$filter" "$candidate_file" > "$tmp_dir/$case_name-sonata.json"
+    diff -u "$tmp_dir/$case_name-reference.json" "$tmp_dir/$case_name-sonata.json" \
         || fail "$case_name" "$relative projection differs"
     printf 'PASS %-32s semantic JSON\n' "$case_name"
 }
@@ -161,7 +161,7 @@ compare_projection require-dev-lock composer.lock "$lock_projection"
 reference_runtime=$($php_bin -r "require '$reference_dir/vendor/autoload.php'; echo Root\\App::value(), ':', Root\\Tests\\Fixture::value();")
 candidate_runtime=$($php_bin -r "require '$candidate_dir/vendor/autoload.php'; echo Root\\App::value(), ':', Root\\Tests\\Fixture::value();")
 [[ $reference_runtime == "$candidate_runtime" && $candidate_runtime == 'base-app:tests' ]] \
-    || fail require-autoload-runtime "Composer=$reference_runtime composer-rs=$candidate_runtime"
+    || fail require-autoload-runtime "Composer=$reference_runtime sonata=$candidate_runtime"
 printf 'PASS %-32s %s\n' require-autoload-runtime "$candidate_runtime"
 
 for project in "$reference_dir" "$candidate_dir"; do
@@ -176,7 +176,7 @@ run_pair dump-authoritative dump-autoload --classmap-authoritative --no-scripts
 reference_runtime=$($php_bin -r "require '$reference_dir/vendor/autoload.php'; echo Root\\App::value();")
 candidate_runtime=$($php_bin -r "require '$candidate_dir/vendor/autoload.php'; echo Root\\App::value();")
 [[ $reference_runtime == "$candidate_runtime" && $candidate_runtime == 'base-app' ]] \
-    || fail dump-authoritative-runtime "Composer=$reference_runtime composer-rs=$candidate_runtime"
+    || fail dump-authoritative-runtime "Composer=$reference_runtime sonata=$candidate_runtime"
 printf 'PASS %-32s %s\n' dump-authoritative-runtime "$candidate_runtime"
 
 run_pair dump-no-dev dump-autoload --no-dev --no-scripts
@@ -200,7 +200,7 @@ COMPOSER_HOME="$tmp_dir/home-reference" "$php_bin" "$composer_dir/bin/composer" 
     > "$tmp_dir/require-failure-reference.out" 2>&1
 reference_code=$?
 COMPOSER_HOME="$tmp_dir/home-candidate" "$composer_rs_bin" require -d "$candidate_dir" 'missing/package:^1.0' \
-    > "$tmp_dir/require-failure-composer-rs.out" 2>&1
+    > "$tmp_dir/require-failure-sonata.out" 2>&1
 candidate_code=$?
 set -e
 [[ $reference_code -ne 0 && $candidate_code -ne 0 ]] || fail require-failure "both commands must fail"

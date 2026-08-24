@@ -1,6 +1,6 @@
 use std::fmt;
 
-use composer_rs_semver::VersionParser;
+use sonata_semver::VersionParser;
 
 use super::pool::{PackageId, Pool};
 use super::rule::{Rule, RuleType};

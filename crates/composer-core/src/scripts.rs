@@ -229,7 +229,7 @@ pub fn run_command(
         return execute_shell_command(&full_cmd, working_dir, ctx);
     }
 
-    // Handle @composer - execute composer command via composer-rs
+    // Handle @composer - execute composer command via sonata
     if let Some(composer_cmd) = cmd.strip_prefix("@composer ") {
         let composer_binary = shell_escape(runtime.composer_binary.to_string_lossy().as_ref());
         let full_cmd =

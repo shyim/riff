@@ -1,5 +1,5 @@
 [package]
-name = "composer-rs-spdx"
+name = "sonata-spdx"
 description = "SPDX license validation library compatible with Composer/spdx-licenses"
 version.workspace = true
 edition.workspace = true

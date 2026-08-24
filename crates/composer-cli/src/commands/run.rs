@@ -4,10 +4,10 @@ use anyhow::{Context, Result};
 use console::style;
 use std::path::PathBuf;
 
-use composer_rs_core::json::ComposerJson;
+use sonata_core::json::ComposerJson;
 
 use crate::platform::AppContext;
-use composer_rs_core::scripts;
+use sonata_core::scripts;
 
 #[derive(usage_rs::Args, Debug)]
 pub struct RunArgs {

@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
 use compact_str::CompactString;
-use composer_rs_semver::VersionParser;
 use console::style;
 use foldhash::{HashMap as FastHashMap, HashMapExt, HashSet as FastHashSet};
 use indicatif::{ProgressBar, ProgressStyle};
+use sonata_semver::VersionParser;
 use std::collections::{
     btree_map::Entry as BTreeEntry, hash_map::Entry, BTreeMap, HashMap, HashSet, VecDeque,
 };

@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use console::style;
 use std::path::PathBuf;
 
-use composer_rs_core::{
+use sonata_core::{
     config::Config,
     installer::{Installer, UpdateOptions},
     json::{ComposerJson, ComposerLock},

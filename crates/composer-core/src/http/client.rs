@@ -11,7 +11,7 @@
 //!
 //! Basic usage:
 //! ```no_run
-//! use composer_rs_core::http::HttpClient;
+//! use sonata_core::http::HttpClient;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let client = HttpClient::new()?;
@@ -40,7 +40,7 @@
 //!
 //! Custom configuration:
 //! ```no_run
-//! use composer_rs_core::http::{HttpClient, HttpClientConfig};
+//! use sonata_core::http::{HttpClient, HttpClientConfig};
 //! use std::time::Duration;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -65,7 +65,7 @@ use tokio::io::AsyncWriteExt;
 
 use crate::config::{AuthConfig, AuthMatch};
 
-const DEFAULT_USER_AGENT: &str = "Composer/2.0 (composer-rs-core)";
+const DEFAULT_USER_AGENT: &str = "Composer/2.0 (sonata-core)";
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_MAX_RETRIES: u32 = 3;

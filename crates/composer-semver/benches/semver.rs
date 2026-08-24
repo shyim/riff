@@ -1,6 +1,6 @@
-use composer_rs_semver::constraint::php_version_compare;
-use composer_rs_semver::{Semver, VersionParser};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use sonata_semver::constraint::php_version_compare;
+use sonata_semver::{Semver, VersionParser};
 
 fn bench_php_version_compare(c: &mut Criterion) {
     let cases = [

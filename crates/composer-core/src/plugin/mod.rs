@@ -1,7 +1,7 @@
 //! Plugin system for ported Composer plugins.
 //!
 //! This module provides native Rust implementations of popular Composer plugins.
-//! Since composer-rs cannot execute PHP-based Composer plugins, these are manually
+//! Since sonata cannot execute PHP-based Composer plugins, these are manually
 //! ported and registered as event listeners.
 //!
 //! Each plugin implements `EventListener` directly and checks if its

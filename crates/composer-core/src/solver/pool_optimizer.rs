@@ -16,9 +16,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use compact_str::CompactString;
-use composer_rs_semver::{ConstraintInterface, NormalizedVersion, VersionParser};
 use hashbrown::{hash_map::EntryRef, HashMap as BorrowedKeyMap};
 use smallvec::SmallVec;
+use sonata_semver::{ConstraintInterface, NormalizedVersion, VersionParser};
 
 use super::policy::Policy;
 use super::pool::{PackageId, Pool, PoolEntry};

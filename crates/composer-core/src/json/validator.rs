@@ -1,12 +1,12 @@
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
-use composer_rs_semver::VersionParser;
-use composer_rs_spdx::SpdxLicenses;
 use jsonschema::error::{ValidationError, ValidationErrorKind};
 use jsonschema::Validator;
 use regex::Regex;
 use serde_json::{Map, Value};
+use sonata_semver::VersionParser;
+use sonata_spdx::SpdxLicenses;
 
 use crate::is_platform_package;
 

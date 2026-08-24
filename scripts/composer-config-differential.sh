@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 composer_dir=${COMPOSER_SRC_DIR:-$(cd "$repo_root/.." && pwd)/composer}
 php_bin=${PHP_BIN:-$(command -v php || true)}
-composer_rs_bin=${COMPOSER_RS_BIN:-$repo_root/target/debug/composer-rs}
+composer_rs_bin=${COMPOSER_RS_BIN:-$repo_root/target/debug/sonata}
 export COMPOSER_RS_PHP="$php_bin"
 read_fixture=$repo_root/tests/composer-parity/config/read/composer.json
 
@@ -13,7 +13,7 @@ if [[ ! -x "$php_bin" ]]; then
     exit 1
 fi
 if [[ ! -x "$composer_rs_bin" ]]; then
-    echo "Missing composer-rs binary at $composer_rs_bin; run 'make build' first." >&2
+    echo "Missing sonata binary at $composer_rs_bin; run 'make build' first." >&2
     exit 1
 fi
 if [[ ! -f "$composer_dir/bin/composer" || ! -f "$composer_dir/vendor/autoload.php" ]]; then
@@ -59,13 +59,13 @@ compare_outputs() {
     local reference_output=$4
     local candidate_output=$5
     local reference_normalized=$tmp_dir/$case_name-reference.normalized
-    local candidate_normalized=$tmp_dir/$case_name-composer-rs.normalized
+    local candidate_normalized=$tmp_dir/$case_name-sonata.normalized
 
     normalize_output "$reference_output" "$reference_dir" "$candidate_dir" > "$reference_normalized"
     normalize_output "$candidate_output" "$reference_dir" "$candidate_dir" > "$candidate_normalized"
 
     if [[ $reference_code -ne $candidate_code ]]; then
-        printf 'FAIL %-30s exit code: Composer=%s composer-rs=%s\n' \
+        printf 'FAIL %-30s exit code: Composer=%s sonata=%s\n' \
             "$case_name" "$reference_code" "$candidate_code" >&2
         failures=$((failures + 1))
         return 1
@@ -84,7 +84,7 @@ run_read() {
     shift 2
     prepare_case "$case_name" "$manifest"
     local reference_output=$tmp_dir/$case_name-reference.out
-    local candidate_output=$tmp_dir/$case_name-composer-rs.out
+    local candidate_output=$tmp_dir/$case_name-sonata.out
     local reference_code candidate_code
 
     set +e
@@ -116,10 +116,10 @@ compare_json_file() {
     fi
 
     jq -S . "$reference_path" > "$tmp_dir/$case_name-reference-${relative_path//\//-}"
-    jq -S . "$candidate_path" > "$tmp_dir/$case_name-composer-rs-${relative_path//\//-}"
+    jq -S . "$candidate_path" > "$tmp_dir/$case_name-sonata-${relative_path//\//-}"
     if ! diff -u \
         "$tmp_dir/$case_name-reference-${relative_path//\//-}" \
-        "$tmp_dir/$case_name-composer-rs-${relative_path//\//-}"; then
+        "$tmp_dir/$case_name-sonata-${relative_path//\//-}"; then
         printf 'FAIL %-30s %s differs\n' "$case_name" "$relative_path" >&2
         failures=$((failures + 1))
         return 1
@@ -133,7 +133,7 @@ run_write() {
     shift 2
     prepare_case "$case_name" "$manifest"
     local reference_output=$tmp_dir/$case_name-reference.out
-    local candidate_output=$tmp_dir/$case_name-composer-rs.out
+    local candidate_output=$tmp_dir/$case_name-sonata.out
     local reference_code candidate_code
 
     set +e
@@ -160,7 +160,7 @@ run_rejected() {
     shift 3
     prepare_case "$case_name" "$manifest"
     local reference_output=$tmp_dir/$case_name-reference.out
-    local candidate_output=$tmp_dir/$case_name-composer-rs.out
+    local candidate_output=$tmp_dir/$case_name-sonata.out
     local reference_code candidate_code
 
     set +e
@@ -173,7 +173,7 @@ run_rejected() {
 
     local passed=true
     if [[ $reference_code -eq 0 || $candidate_code -ne $reference_code ]]; then
-        printf 'FAIL %-30s exit code: Composer=%s composer-rs=%s\n' \
+        printf 'FAIL %-30s exit code: Composer=%s sonata=%s\n' \
             "$case_name" "$reference_code" "$candidate_code" >&2
         failures=$((failures + 1))
         passed=false
@@ -262,7 +262,7 @@ reference_dir=$tmp_dir/global/reference
 candidate_dir=$tmp_dir/global/candidate
 mkdir -p "$reference_dir" "$candidate_dir"
 reference_output=$tmp_dir/global-reference.out
-candidate_output=$tmp_dir/global-composer-rs.out
+candidate_output=$tmp_dir/global-sonata.out
 set +e
 COMPOSER_HOME="$reference_dir" "$php_bin" "$composer_dir/bin/composer" \
     config --global --no-ansi vendor-dir global-vendor > "$reference_output" 2>&1
@@ -274,8 +274,8 @@ global_passed=true
 compare_outputs global "$reference_code" "$candidate_code" "$reference_output" "$candidate_output" || global_passed=false
 for file in config.json auth.json; do
     jq -S . "$reference_dir/$file" > "$tmp_dir/global-reference-$file"
-    jq -S . "$candidate_dir/$file" > "$tmp_dir/global-composer-rs-$file"
-    if ! diff -u "$tmp_dir/global-reference-$file" "$tmp_dir/global-composer-rs-$file"; then
+    jq -S . "$candidate_dir/$file" > "$tmp_dir/global-sonata-$file"
+    if ! diff -u "$tmp_dir/global-reference-$file" "$tmp_dir/global-sonata-$file"; then
         printf 'FAIL %-30s %s differs\n' global "$file" >&2
         failures=$((failures + 1))
         global_passed=false

@@ -460,102 +460,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "composer-rs-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "assert_cmd",
- "colored",
- "composer-rs-core",
- "composer-rs-semver",
- "console",
- "env_logger",
- "foldhash",
- "globset",
- "indexmap",
- "log",
- "mimalloc",
- "once_cell",
- "predicates",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "urlencoding",
- "usage-rs",
- "wait-timeout",
-]
-
-[[package]]
-name = "composer-rs-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "bzip2",
- "chrono",
- "compact_str",
- "composer-rs-semver",
- "composer-rs-spdx",
- "console",
- "directories",
- "flate2",
- "foldhash",
- "futures-util",
- "git2",
- "glob",
- "hashbrown",
- "indexmap",
- "indicatif",
- "jsonschema",
- "log",
- "md-5",
- "pathdiff",
- "regex",
- "reqwest",
- "rkyv",
- "rmp-serde",
- "serde",
- "serde_json",
- "sha1",
- "sha2",
- "shellexpand",
- "smallvec",
- "tar",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "tokio-test",
- "url",
- "urlencoding",
- "walkdir",
- "xz2",
- "zip",
-]
-
-[[package]]
-name = "composer-rs-semver"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "lazy_static",
- "regex",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "composer-rs-spdx"
-version = "0.1.0"
-dependencies = [
- "lazy_static",
- "regex",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "compression-codecs"
 version = "0.4.38"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2673,6 +2577,102 @@ checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "sonata"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assert_cmd",
+ "colored",
+ "console",
+ "env_logger",
+ "foldhash",
+ "globset",
+ "indexmap",
+ "log",
+ "mimalloc",
+ "once_cell",
+ "predicates",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sonata-core",
+ "sonata-semver",
+ "tempfile",
+ "tokio",
+ "urlencoding",
+ "usage-rs",
+ "wait-timeout",
+]
+
+[[package]]
+name = "sonata-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bzip2",
+ "chrono",
+ "compact_str",
+ "console",
+ "directories",
+ "flate2",
+ "foldhash",
+ "futures-util",
+ "git2",
+ "glob",
+ "hashbrown",
+ "indexmap",
+ "indicatif",
+ "jsonschema",
+ "log",
+ "md-5",
+ "pathdiff",
+ "regex",
+ "reqwest",
+ "rkyv",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "shellexpand",
+ "smallvec",
+ "sonata-semver",
+ "sonata-spdx",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-test",
+ "url",
+ "urlencoding",
+ "walkdir",
+ "xz2",
+ "zip",
+]
+
+[[package]]
+name = "sonata-semver"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "lazy_static",
+ "regex",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "sonata-spdx"
+version = "0.1.0"
+dependencies = [
+ "lazy_static",
+ "regex",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

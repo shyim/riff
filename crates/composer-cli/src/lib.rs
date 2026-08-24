@@ -14,8 +14,8 @@ use platform::AppContext;
 
 #[derive(Debug, usage_rs::Cli)]
 #[usage(
-    name = "composer-rs",
-    bin = "composer-rs",
+    name = "sonata",
+    bin = "sonata",
     version,
     about = "A fast, standalone Composer-compatible package manager",
     completion,
@@ -127,8 +127,8 @@ async fn run_async(cli: Cli) -> Result<i32> {
             print!(
                 "{}",
                 Cli::app()
-                    .name("composer-rs")
-                    .bin("composer-rs")
+                    .name("sonata")
+                    .bin("sonata")
                     .completion_app()
                     .completion_script(shell)
             );

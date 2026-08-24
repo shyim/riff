@@ -2,7 +2,7 @@
 ///
 /// These tests verify that the configuration system works correctly
 /// when loading from files and environment variables.
-use composer_rs_core::config::{Config, ConfigLoader, PreferredInstall, StoreAuths};
+use sonata_core::config::{Config, ConfigLoader, PreferredInstall, StoreAuths};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -249,7 +249,7 @@ fn test_platform_overrides() {
 
 #[test]
 fn test_authentication_config() {
-    use composer_rs_core::config::HttpBasicAuth;
+    use sonata_core::config::HttpBasicAuth;
 
     let mut config = Config::default();
 
