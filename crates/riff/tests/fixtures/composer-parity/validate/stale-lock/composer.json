@@ -1,0 +1,5 @@
+{
+  "name": "acme/stale-lock",
+  "description": "A package with a stale lock",
+  "license": "MIT"
+}

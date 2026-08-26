@@ -1,0 +1,8 @@
+{
+  "name": "acme/valid",
+  "description": "A valid package",
+  "license": "MIT",
+  "require": {
+    "php": "^8.5"
+  }
+}

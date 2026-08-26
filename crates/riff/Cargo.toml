@@ -1,0 +1,49 @@
+[package]
+name = "riff"
+description = "Fast, standalone Composer-compatible package manager"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "riff"
+path = "src/lib.rs"
+
+[[bin]]
+name = "riff"
+path = "src/bin/riff.rs"
+
+[[bin]]
+name = "composer"
+path = "src/bin/composer.rs"
+
+[features]
+default = ["mimalloc"]
+mimalloc = ["dep:mimalloc"]
+
+[dependencies]
+riff-core = { path = "../riff-core" }
+riff-semver = { path = "../riff-semver" }
+anyhow = "1"
+colored = "2"
+console = "0.15"
+env_logger = "0.11"
+foldhash = "0.2"
+globset = "0.4"
+indexmap = "2"
+log = "0.4"
+mimalloc = { version = "0.1", default-features = false, optional = true }
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+tokio = { version = "1", features = ["full"] }
+urlencoding = "2"
+usage-rs = { version = "6", features = ["completions"] }
+wait-timeout = "0.2"
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+shlex = "2"

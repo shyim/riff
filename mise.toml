@@ -1,0 +1,24 @@
+[tools]
+actionlint = "1.7.12"
+rust = "1.98.0"
+
+[tasks.build]
+run = "make build"
+
+[tasks.test]
+run = "make test"
+
+[tasks."test:core"]
+run = "make test-core"
+
+[tasks."test:cli"]
+run = "make test-cli"
+
+[tasks."test:composer"]
+run = "make test-composer"
+
+[tasks."test:composer-check"]
+run = "make composer-test-check"
+
+[tasks.check]
+run = "make check"

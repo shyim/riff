@@ -1,0 +1,4 @@
+# Upstream fixture<TAB>Reason the fixture has no direct Riff contract
+plugin-autoloading-only-loads-dependencies.test	Executes arbitrary in-process PHP Composer plugins; Riff only runs native plugin ports
+installed-versions.test	Asserts Composer's mutable in-process InstalledVersions snapshots while arbitrary PHP plugins initialize; Riff does not execute PHP plugin lifecycle code
+installed-versions2.test	Asserts Composer's mutable in-process InstalledVersions snapshots during PHP plugin upgrades; Riff does not execute PHP plugin lifecycle code

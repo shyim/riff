@@ -1,0 +1,3 @@
+# Upstream symbol<TAB>fixture suite<TAB>coverage note
+InstallerTest.php::testSlowIntegration	installer-slow	Covered by the copied installer-slow fixture corpus and generated selective Rust tests.
+InstallerTest.php::testIntegrationWithPoolOptimizer	installer	Covered by the copied installer fixture corpus; Riff always executes its native pool optimizer.

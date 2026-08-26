@@ -1,0 +1,3 @@
+# Upstream fixture<TAB>Cargo package<TAB>exact Rust test filter<TAB>local source file
+create-project-command.test	riff	unix::composer_create_project_command_clones_the_requested_source_package	crates/riff/tests/create_project.rs
+create-project-shows-full-hash-for-dev-packages.test	riff	unix::composer_create_project_shows_full_hash_for_verbose_dev_package	crates/riff/tests/create_project.rs

@@ -1,0 +1,314 @@
+//! Utility functions for the package manager.
+
+use md5::{Digest, Md5};
+use regex::Regex;
+use serde_json::Value;
+use std::borrow::Cow;
+
+/// Return Composer's canonical lowercase package name without allocating when
+/// the input already satisfies the package-name grammar.
+pub fn canonical_package_name(name: &str) -> Cow<'_, str> {
+    if name.is_ascii() && !name.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        Cow::Borrowed(name)
+    } else {
+        Cow::Owned(name.to_lowercase())
+    }
+}
+
+/// Compute the content hash for a composer.json file.
+/// This matches Composer's algorithm:
+/// 1. Parse the JSON
+/// 2. Extract relevant keys (name, version, require, etc.)
+/// 3. Sort keys alphabetically
+/// 4. JSON encode (compact, no pretty print)
+/// 5. MD5 hash
+pub fn compute_content_hash(json_content: &str) -> String {
+    let json_value: Value = match serde_json::from_str(json_content) {
+        Ok(v) => v,
+        Err(_) => return "0".repeat(32),
+    };
+
+    let mut relevant_keys = vec![
+        "name",
+        "version",
+        "require",
+        "require-dev",
+        "conflict",
+        "replace",
+        "provide",
+        "minimum-stability",
+        "prefer-stable",
+        "repositories",
+        "extra",
+    ];
+    relevant_keys.sort();
+
+    let mut relevant_map = serde_json::Map::new();
+
+    if let Some(obj) = json_value.as_object() {
+        for key in &relevant_keys {
+            if let Some(value) = obj.get(*key) {
+                relevant_map.insert(key.to_string(), value.clone());
+            }
+        }
+    }
+
+    // Include config.platform if present
+    if let Some(config) = json_value.get("config") {
+        if let Some(platform) = config.get("platform") {
+            if let Some(obj) = platform.as_object() {
+                if !obj.is_empty() {
+                    let mut config_obj = serde_json::Map::new();
+                    config_obj.insert("platform".to_string(), platform.clone());
+                    relevant_map.insert("config".to_string(), Value::Object(config_obj));
+                }
+            }
+        }
+    }
+
+    relevant_map.sort_keys();
+
+    let json_output = match serde_json::to_string(&Value::Object(relevant_map)) {
+        Ok(s) => s,
+        Err(_) => return "0".repeat(32),
+    };
+
+    // Composer escapes forward slashes in JSON
+    let json_with_escaped_slashes = json_output.replace('/', "\\/");
+
+    let mut hasher = Md5::new();
+    hasher.update(json_with_escaped_slashes.as_bytes());
+    let result = hasher.finalize();
+    format!("{:x}", result)
+}
+
+/// Check if a package name represents a platform package.
+///
+/// Platform packages are virtual packages that represent the PHP runtime
+/// and its extensions. They include:
+/// - `php` - The PHP interpreter itself
+/// - `php-64bit`, `php-ipv6`, `php-zts`, `php-debug` - PHP capability packages
+/// - `ext-*` - PHP extensions (e.g., `ext-json`, `ext-mbstring`)
+/// - `lib-*` - System libraries (e.g., `lib-libxml`)
+/// - `composer`, `composer-runtime-api`, `composer-plugin-api` - Composer packages
+///
+/// # Examples
+///
+/// ```
+/// use riff_core::util::is_platform_package;
+///
+/// assert!(is_platform_package("php"));
+/// assert!(is_platform_package("php-64bit"));
+/// assert!(is_platform_package("ext-json"));
+/// assert!(is_platform_package("lib-libxml"));
+/// assert!(is_platform_package("composer"));
+/// assert!(is_platform_package("composer-runtime-api"));
+///
+/// // These are NOT platform packages
+/// assert!(!is_platform_package("phpstan/phpstan"));
+/// assert!(!is_platform_package("phpunit/phpunit"));
+/// assert!(!is_platform_package("symfony/console"));
+/// ```
+pub fn is_platform_package(name: &str) -> bool {
+    // Exact matches for php and its variants
+    name == "php"
+        || name == "php-64bit"
+        || name == "php-ipv6"
+        || name == "php-zts"
+        || name == "php-debug"
+        || name == "hhvm"
+        // Extension and library prefixes
+        || name.starts_with("ext-")
+        || name.starts_with("lib-")
+        // Composer virtual packages
+        || name == "composer"
+        || name == "composer-runtime-api"
+        || name == "composer-plugin-api"
+}
+
+/// Expand a leading home marker or environment variable in a filesystem path.
+pub fn expand_path(path: &str) -> String {
+    let home = std::env::var("HOME")
+        .ok()
+        .or_else(|| std::env::var("USERPROFILE").ok());
+    expand_path_with(path, home.as_deref(), |name| {
+        if name.eq_ignore_ascii_case("HOME") {
+            home.clone()
+        } else {
+            std::env::var(name).ok()
+        }
+    })
+}
+
+fn expand_path_with(
+    path: &str,
+    home: Option<&str>,
+    environment: impl Fn(&str) -> Option<String>,
+) -> String {
+    if let Some(suffix) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
+        return home.map_or_else(
+            || path.to_string(),
+            |directory| format!("{directory}/{}", suffix.replace('\\', "/")),
+        );
+    }
+
+    let pattern = Regex::new(r"^(?:\$(?P<dollar>\w+)|%(?P<percent>\w+)%)(?P<path>.*)$")
+        .expect("path environment pattern is valid");
+    let Some(captures) = pattern.captures(path) else {
+        return path.to_string();
+    };
+    let variable = captures
+        .name("dollar")
+        .or_else(|| captures.name("percent"))
+        .expect("one environment capture must match")
+        .as_str();
+    format!(
+        "{}{}",
+        environment(variable).unwrap_or_default(),
+        captures.name("path").map_or("", |value| value.as_str())
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonical_package_name_borrows_lowercase_ascii() {
+        let name = String::from("vendor/package");
+        let canonical = canonical_package_name(&name);
+        assert!(matches!(canonical, Cow::Borrowed(_)));
+        assert_eq!(canonical, "vendor/package");
+    }
+
+    #[test]
+    fn canonical_package_name_normalizes_mixed_case() {
+        assert_eq!(canonical_package_name("Vendor/Package"), "vendor/package");
+    }
+
+    #[test]
+    fn test_is_platform_package_php() {
+        assert!(is_platform_package("php"));
+    }
+
+    #[test]
+    fn test_is_platform_package_php_variants() {
+        assert!(is_platform_package("php-64bit"));
+        assert!(is_platform_package("php-ipv6"));
+        assert!(is_platform_package("php-zts"));
+        assert!(is_platform_package("php-debug"));
+    }
+
+    #[test]
+    fn test_is_platform_package_extensions() {
+        assert!(is_platform_package("ext-json"));
+        assert!(is_platform_package("ext-mbstring"));
+        assert!(is_platform_package("ext-pdo"));
+        assert!(is_platform_package("ext-curl"));
+    }
+
+    #[test]
+    fn test_is_platform_package_libraries() {
+        assert!(is_platform_package("lib-libxml"));
+        assert!(is_platform_package("lib-openssl"));
+        assert!(is_platform_package("lib-pcre"));
+    }
+
+    #[test]
+    fn test_is_platform_package_composer() {
+        assert!(is_platform_package("composer"));
+        assert!(is_platform_package("composer-runtime-api"));
+        assert!(is_platform_package("composer-plugin-api"));
+    }
+
+    #[test]
+    fn test_is_platform_package_not_platform() {
+        // Packages that start with "php" but are NOT platform packages
+        assert!(!is_platform_package("phpstan/phpstan"));
+        assert!(!is_platform_package("phpunit/phpunit"));
+        assert!(!is_platform_package("phpdocumentor/phpdocumentor"));
+        assert!(!is_platform_package("php-cs-fixer/shim"));
+
+        // Regular packages
+        assert!(!is_platform_package("symfony/console"));
+        assert!(!is_platform_package("laravel/framework"));
+        assert!(!is_platform_package("doctrine/orm"));
+
+        // Packages that might be confused with platform packages
+        assert!(!is_platform_package("ext")); // Not ext-*
+        assert!(!is_platform_package("lib")); // Not lib-*
+        assert!(!is_platform_package("extension-helper"));
+        assert!(!is_platform_package("library-package"));
+    }
+
+    #[test]
+    fn test_is_platform_package_phpunit_packages() {
+        assert!(!is_platform_package("phpunit/phpunit"));
+        assert!(!is_platform_package("phpunit/php-code-coverage"));
+        assert!(!is_platform_package("phpunit/php-file-iterator"));
+        assert!(!is_platform_package("phpunit/php-text-template"));
+        assert!(!is_platform_package("phpunit/php-timer"));
+        assert!(!is_platform_package("phpunit/php-invoker"));
+    }
+
+    #[test]
+    fn test_is_platform_package_case_sensitivity() {
+        // Platform package names are case-sensitive (lowercase)
+        // These should NOT match as platform packages
+        assert!(!is_platform_package("PHP"));
+        assert!(!is_platform_package("Ext-json"));
+        assert!(!is_platform_package("COMPOSER"));
+    }
+
+    #[test]
+    fn composer_platform_repository_valid_platform_packages_data_provider() {
+        let cases = [
+            ("php", true),
+            ("php-debug", true),
+            ("php-ipv6", true),
+            ("php-64bit", true),
+            ("php-zts", true),
+            ("hhvm", true),
+            ("hhvm-foo", false),
+            ("ext-foo", true),
+            ("ext-123", true),
+            ("extfoo", false),
+            ("ext", false),
+            ("lib-foo", true),
+            ("lib-123", true),
+            ("libfoo", false),
+            ("lib", false),
+            ("composer", true),
+            ("composer-foo", false),
+            ("composer-plugin-api", true),
+            ("composer-plugin", false),
+            ("composer-runtime-api", true),
+            ("composer-runtime", false),
+        ];
+
+        for (package, expected) in cases {
+            assert_eq!(
+                is_platform_package(package),
+                expected,
+                "unexpected platform classification for {package}"
+            );
+        }
+    }
+
+    #[test]
+    fn composer_platform_expands_home_and_environment_paths() {
+        let environment = |name: &str| (name == "TESTENV").then(|| "/home/test".to_string());
+        assert_eq!(
+            expand_path_with("%TESTENV%/myPath", Some("/home/current"), environment),
+            "/home/test/myPath"
+        );
+        assert_eq!(
+            expand_path_with("$TESTENV/myPath", Some("/home/current"), environment),
+            "/home/test/myPath"
+        );
+        assert_eq!(
+            expand_path_with("~/test", Some("/home/current"), environment),
+            "/home/current/test"
+        );
+    }
+}

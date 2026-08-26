@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="510" viewBox="0 0 900 510" role="img" aria-labelledby="title description">
+  <title id="title">Symfony Demo installation benchmark</title>
+  <desc id="description">Riff 0.0.1 installs Symfony Demo in 5,260 milliseconds with a cold cache compared with Composer 2.10.2 at 10,810 milliseconds. With a warm archive cache, Riff takes 3,440 milliseconds and Composer takes 4,180 milliseconds.</desc>
+  <rect width="900" height="510" fill="#0d1117" rx="16"/>
+  <text x="48" y="62" fill="#f0f6fc" font-family="system-ui, sans-serif" font-size="28" font-weight="700">Symfony Demo · composer install</text>
+  <text x="48" y="92" fill="#8b949e" font-family="system-ui, sans-serif" font-size="16">Lower is better · wall-clock time in milliseconds</text>
+
+  <g font-family="system-ui, sans-serif">
+    <text x="48" y="144" fill="#f0f6fc" font-size="20" font-weight="700">Cold cache</text>
+    <text x="48" y="169" fill="#8b949e" font-size="14">ZIP archives downloaded</text>
+    <line x1="225" y1="142" x2="840" y2="142" stroke="#30363d"/>
+    <text x="225" y="128" fill="#8b949e" font-size="13">0 ms</text>
+    <text x="530" y="128" fill="#8b949e" font-size="13">6,000 ms</text>
+    <text x="830" y="128" fill="#8b949e" font-size="13" text-anchor="end">12,000 ms</text>
+    <rect x="225" y="184" width="554" height="34" rx="6" fill="#8b949e"/>
+    <text x="48" y="207" fill="#c9d1d9" font-size="16">Composer 2.10.2</text>
+    <text x="791" y="207" fill="#f0f6fc" font-size="16" font-weight="700">10,810 ms</text>
+    <rect x="225" y="234" width="270" height="34" rx="6" fill="#f97316"/>
+    <text x="48" y="257" fill="#c9d1d9" font-size="16">Riff 0.0.1</text>
+    <text x="507" y="257" fill="#f0f6fc" font-size="16" font-weight="700">5,260 ms</text>
+    <text x="840" y="247" fill="#fb923c" font-size="17" font-weight="700" text-anchor="end">2.05× faster</text>
+
+    <text x="48" y="323" fill="#f0f6fc" font-size="20" font-weight="700">Warm cache</text>
+    <text x="48" y="348" fill="#8b949e" font-size="14">Package archives already cached</text>
+    <line x1="225" y1="321" x2="840" y2="321" stroke="#30363d"/>
+    <text x="225" y="307" fill="#8b949e" font-size="13">0 ms</text>
+    <text x="530" y="307" fill="#8b949e" font-size="13">3,000 ms</text>
+    <text x="830" y="307" fill="#8b949e" font-size="13" text-anchor="end">6,000 ms</text>
+    <rect x="225" y="363" width="429" height="34" rx="6" fill="#8b949e"/>
+    <text x="48" y="386" fill="#c9d1d9" font-size="16">Composer 2.10.2</text>
+    <text x="666" y="386" fill="#f0f6fc" font-size="16" font-weight="700">4,180 ms</text>
+    <rect x="225" y="413" width="353" height="34" rx="6" fill="#f97316"/>
+    <text x="48" y="436" fill="#c9d1d9" font-size="16">Riff 0.0.1</text>
+    <text x="590" y="436" fill="#f0f6fc" font-size="16" font-weight="700">3,440 ms</text>
+    <text x="840" y="426" fill="#fb923c" font-size="17" font-weight="700" text-anchor="end">1.22× faster</text>
+  </g>
+
+  <text x="48" y="482" fill="#8b949e" font-family="system-ui, sans-serif" font-size="13">Symfony Demo lock file · 153 packages · PHP 8.5.9 · measured 2026-08-26</text>
+</svg>

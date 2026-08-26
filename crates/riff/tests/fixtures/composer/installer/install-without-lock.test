@@ -1,0 +1,31 @@
+--TEST--
+Installs from composer.json without writing a lock file
+--COMPOSER--
+{
+    "repositories": [
+        {
+            "type": "package",
+            "package": [
+                { "name": "a/a", "version": "1.0.0" }
+            ]
+        }
+    ],
+    "require": {
+        "a/a": "1.0.0"
+    },
+    "config": {
+        "lock": "false"
+    }
+}
+--RUN--
+install
+--EXPECT--
+Installing a/a (1.0.0)
+--EXPECT-OUTPUT--
+<warning>Lockfile creation is disabled in config. Updating dependencies to latest instead of installing from lock file. See https://getcomposer.org/install for more information.</warning>
+Loading composer repositories with package information
+Updating dependencies
+Package operations: 1 install, 0 updates, 0 removals
+Generating autoload files
+--EXPECT-LOCK--
+false

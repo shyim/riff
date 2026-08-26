@@ -1,0 +1,6 @@
+{
+  "scripts": {
+    "pre-status-cmd": "echo PRE_STATUS",
+    "post-status-cmd": "echo POST_STATUS"
+  }
+}

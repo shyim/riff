@@ -1,0 +1,63 @@
+# Upstream PHP test file or exact File.php::testMethod<TAB>Reason there is no direct Riff contract
+AllFunctionalTest.php	Composer's own PHAR build and integration runner
+DocumentationTest.php	Validates code snippets embedded in Composer's documentation tree
+ComposerTest.php	Mutable PHP service-container setter/getter wiring; Riff uses an owned builder graph
+Console/HtmlOutputFormatterTest.php	Symfony Console HTML formatter implementation details
+IO/BaseIOTest.php	Composer PHP IO object and authentication storage implementation
+IO/BufferIOTest.php	Composer PHP in-memory IO implementation
+IO/ConsoleIOTest.php	Symfony Console input and output implementation details
+IO/NullIOTest.php	Composer PHP null IO implementation
+Question/StrictConfirmationQuestionTest.php	Symfony Console question implementation details
+Platform/HhvmDetectorTest.php	HHVM runtime detection is not supported by Riff
+Platform/RuntimeTest.php	PHP ReflectionExtension HTML rendering is bypassed by Riff's JSON platform probe
+Repository/PlatformRepositoryTest.php::testHhvmPackage	HHVM packages are not detected because Riff targets PHP runtimes
+Filter/PlatformRequirementFilter/PlatformRequirementFilterFactoryTest.php	Composer PHP class factory implementation; Riff constructs the value filter directly
+SelfUpdate/VersionsTest.php	Composer PHAR self-update release channel implementation
+Command/SelfUpdateCommandTest.php	Composer PHAR self-update command is not a Riff feature
+Package/Archiver/PharArchiverTest.php	PHP PHAR archive implementation
+Plugin/PluginInstallerTest.php	Arbitrary in-process PHP Composer plugin installation
+Util/ErrorHandlerTest.php	PHP error handler behavior
+Util/IniHelperTest.php	PHP ini mutation and restoration behavior
+Util/SilencerTest.php	PHP error suppression operator behavior
+Util/StreamContextFactoryTest.php	PHP stream context construction; Riff uses a Rust HTTP client
+Util/PlatformTest.php::testIsWindows	PHP runtime platform detection; Rust uses compile-time target configuration
+Util/PlatformTest.php::testAssertPharMetadataSafeAllowsWhenOptedIn	PHP PHAR unserialization guard is not used by Riff's Rust archive readers
+Util/PlatformTest.php::testAssertPharMetadataSafeAllowsOnPhp8WithoutOptIn	PHP PHAR unserialization guard is not used by Riff's Rust archive readers
+Util/PlatformTest.php::testAssertPharMetadataSafeThrowsOnPhp7WithoutOptIn	PHP PHAR unserialization guard is not used by Riff's Rust archive readers
+Util/ZipTest.php::testThrowsExceptionIfZipExtensionIsNotLoaded	Riff uses a native Rust ZIP reader and has no PHP extension dependency
+Util/TarTest.php::testThrowsOnUnsafePhpVersionWithoutOptIn	Riff's native Rust TAR reader is independent of PHP metadata safety
+Util/FilesystemTest.php::testFindShortestPathCode	Generates PHP source expressions using __FILE__, __DIR__, and dirname rather than a filesystem path contract
+Util/FilesystemTest.php::testJunctions	Windows directory junction creation and detection is an operating-system-specific Composer compatibility layer
+Advisory/AuditorTest.php::testNeedsCompleteAdvisoryLoad	Composer's partial-advisory reload decision is specific to its two-stage repository payload optimization; Riff's Packagist audit response always contains complete advisory metadata
+Util/FilesystemTest.php::testOverrideJunctions	Overriding Windows directory junctions is an operating-system-specific Composer compatibility layer
+Package/LockerTest.php::testLockBadPackages	PHP mock of an incomplete PackageInterface is unrepresentable by Riff's typed locked-package conversion
+Json/JsonFileTest.php::testCustomSchemaValidationLax	Composer exposes arbitrary external JSON-schema validation through its PHP JsonFile API; Riff validates its fixed manifest and authentication configuration boundaries
+Json/JsonFileTest.php::testCustomSchemaValidationStrict	Composer exposes arbitrary external JSON-schema validation through its PHP JsonFile API; Riff validates its fixed manifest and authentication configuration boundaries
+Json/JsonFileTest.php::testOnlyUnicode	Exercises PHP json_encode option flags; Riff intentionally exposes one UTF-8 JSON serialization policy
+Json/JsonFileTest.php::testEscapedSlashes	Exercises PHP json_encode option flags; Riff intentionally exposes one UTF-8 JSON serialization policy
+Json/JsonFileTest.php::testEscapedUnicode	Exercises PHP json_encode option flags; Riff intentionally exposes one UTF-8 JSON serialization policy
+Package/BasePackageTest.php::testSetSameRepository	Composer package objects retain a mutable PHP repository back-reference; Riff repositories own immutable package values without a package-to-repository pointer
+Package/BasePackageTest.php::testSetAnotherRepository	Composer package objects guard reassignment of a mutable PHP repository back-reference; Riff repositories own immutable package values without that pointer
+Package/RootAliasPackageTest.php	Composer's mutable RootAliasPackage setter proxy synchronizes later root-package mutations; Riff builds an immutable alias snapshot after root metadata is finalized
+Util/ProcessExecutorTest.php::testUseIOIsNotNullAndIfNotCaptured	Composer PHP IOInterface mock callback wiring; Riff forwards uncaptured child output through inherited standard streams
+Util/ProcessExecutorTest.php::testConsoleIODoesNotFormatSymfonyConsoleStyle	Symfony Console decoration and ConsoleIO formatting behavior is outside Riff's process execution boundary
+Util/AuthHelperTest.php::testAddAuthenticationHeaderDeprecation	PHP user-deprecation error-handler signaling for Composer's removed header wrapper; Riff exposes only the current typed authentication-options API
+Downloader/DownloadManagerTest.php::testSetGetDownloader	Composer's mutable PHP downloader registry has no observable Riff equivalent because Riff wires its native downloaders statically
+# Riff always runs its native pool optimizer and does not expose Composer's test-only raw-pool switch; the shared installer fixture semantics are covered by the delegated optimized corpus.
+InstallerTest.php::testIntegrationWithRawPool	Composer-specific raw pool execution mode is not exposed by Riff; fixture semantics are covered by the optimized installer corpus.
+Util/Http/ProxyManagerTest.php::testInstantiation	Composer's resettable process-global PHP proxy singleton identity is an implementation detail; Riff uses immutable per-client proxy environment snapshots.
+Util/TlsHelperTest.php::testCheckCertificateHost	Composer's deprecated manual PHP TLS hostname verifier is replaced by rustls and webpki certificate verification in Riff.
+Util/TlsHelperTest.php::testGetCertificateNames	Composer's deprecated PHP certificate-array parser has no Riff boundary; rustls and webpki parse peer certificates internally.
+Json/JsonFormatterTest.php::testUtf16SurrogatePair	Composer's deprecated formatter intentionally preserves the source spelling of UTF-16 surrogate escapes; Riff parses JSON to Unicode scalar values and does not promise byte-preserving escape syntax.
+Json/JsonValidationExceptionTest.php	Tests trivial PHP exception constructor/getter storage; Riff returns structured ManifestValidation values without this exception wrapper.
+DependencyResolver/RuleSetTest.php::testAddWhenTypeIsNotRecognized	Composer probes an arbitrary integer rule-set category through PHP's dynamic API; Riff's RuleSetKind enum makes invalid categories unrepresentable.
+Repository/ArrayRepositoryTest.php::testAutomaticallyAddAliasedPackageButNotRemove	Composer stores AliasPackage objects inside mutable repositories; Riff keeps repository packages immutable and materializes aliases as separate typed solver-pool entries.
+Repository/InstalledRepositoryTest.php::testAddRepository	Composer tests a runtime rejection of a non-installed PHP repository object; Riff's concrete InstalledRepository and typed repository manager make that invalid construction unrepresentable.
+Script/EventTest.php	Composer's originating-event identity API exists for nested in-process PHP callback objects; Riff executes declarative scripts as child processes and does not expose those PHP event objects.
+Installer/InstallationManagerTest.php::testAddGetInstaller	Composer tests a mutable registry of arbitrary PHP installer plugin objects; Riff supports package types through statically wired native installation paths and does not load arbitrary PHP installer plugins.
+Installer/InstallationManagerTest.php::testAddRemoveInstaller	Composer tests removal from a mutable registry of arbitrary PHP installer plugin objects; Riff supports package types through statically wired native installation paths and does not load arbitrary PHP installer plugins.
+Repository/FilterRepositoryTest.php::testSecurityAdvisoriesDisabledInChild	Composer tests advisory methods on its PHP repository interface; Riff resolves advisory metadata through a separate policy source and exposes no child advisory API for FilterRepository to forward.
+Repository/FilterRepositoryTest.php::testFiltersDisabledInChild	Composer tests filter-list methods on its PHP repository interface; Riff resolves filter metadata through a separate policy source and exposes no child filter-list API for FilterRepository to forward.
+Command/RunScriptCommandTest.php::testCanDefineAliases	Composer dynamically registers PHP script aliases as Symfony Console commands, while Riff has a statically compiled Rust command tree
+Command/RunScriptCommandTest.php::testExecutionOfSimpleSymfonyCommand	Composer loads PHP classes extending Symfony Console Command in-process, which is not a Riff Rust CLI extension mechanism
+Command/RunScriptCommandTest.php::testExecutionOfSymfonyCommandWithConfiguration	Composer introspects PHP Symfony Command configuration in-process, which is not a Riff Rust CLI extension mechanism

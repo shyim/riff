@@ -1,0 +1,3 @@
+# Composer path repository references hash raw composer.json bytes. Keep the
+# compatibility fixtures stable when Git checks them out on Windows.
+crates/riff/tests/fixtures/composer/path-repositories/**/*.json text eol=lf
