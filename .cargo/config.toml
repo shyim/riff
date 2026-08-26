@@ -1,0 +1,4 @@
+[alias]
+test-core = "test -p riff-core --lib"
+test-cli = "test -p riff --tests"
+test-composer = "test -p riff --test composer_fixtures"

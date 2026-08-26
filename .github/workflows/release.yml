@@ -1,0 +1,413 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to build without publishing
+        required: true
+        default: main
+        type: string
+      label:
+        description: Archive version label for the dry run
+        required: true
+        default: dryrun
+        type: string
+      release:
+        description: Publish the matching version tag instead of creating a dry-run bundle
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  validate:
+    name: Validate release input
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      checkout-ref: ${{ steps.release.outputs.checkout_ref }}
+      is-release: ${{ steps.release.outputs.is_release }}
+      label: ${{ steps.release.outputs.label }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+          # The release ancestry check below fetches origin/main. Keep the
+          # short-lived Actions token available for that fetch.
+          persist-credentials: true
+      - name: Validate tag and version
+        id: release
+        shell: bash
+        env:
+          DRY_RUN_LABEL: ${{ inputs.label }}
+          MANUAL_RELEASE: ${{ inputs.release }}
+        run: |
+          set -euo pipefail
+
+          version=$(cargo metadata --format-version 1 --no-deps |
+            jq -r '.packages[] | select(.name == "riff") | .version')
+          if [ -z "$version" ] || [ "$version" = "null" ]; then
+            echo "::error::Unable to resolve the riff package version"
+            exit 1
+          fi
+
+          if [ "$GITHUB_EVENT_NAME" = "push" ] || [ "$MANUAL_RELEASE" = "true" ]; then
+            tag=$GITHUB_REF_NAME
+            if [ "$tag" != "v$version" ]; then
+              echo "::error::Tag $tag does not match workspace version v$version"
+              exit 1
+            fi
+
+            git fetch --no-tags origin main
+            release_commit=$(git rev-parse HEAD)
+            if ! git merge-base --is-ancestor "$release_commit" origin/main; then
+              echo "::error::Release tag must point to a commit contained in origin/main"
+              exit 1
+            fi
+
+            checkout_ref=$release_commit
+            is_release=true
+            label=$tag
+          else
+            if ! [[ "$DRY_RUN_LABEL" =~ ^[A-Za-z0-9._-]+$ ]]; then
+              echo "::error::Dry-run label may contain only letters, numbers, dots, underscores, and hyphens"
+              exit 1
+            fi
+
+            checkout_ref=$(git rev-parse HEAD)
+            is_release=false
+            label=$DRY_RUN_LABEL
+          fi
+
+          if [[ "$version" == *-* ]]; then
+            prerelease=true
+          else
+            prerelease=false
+          fi
+
+          {
+            echo "checkout_ref=$checkout_ref"
+            echo "is_release=$is_release"
+            echo "label=$label"
+            echo "prerelease=$prerelease"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+  quality:
+    name: Release quality gate
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate.outputs.checkout-ref }}
+          persist-credentials: false
+      - name: Set up PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: "8.5"
+          coverage: none
+          tools: none
+      - name: Install Rust quality components
+        run: rustup component add clippy rustfmt --toolchain 1.98.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: release-quality
+      - name: Check formatting
+        run: make fmt
+      - name: Run Clippy
+        run: make clippy
+      - name: Run workspace tests
+        run: make test
+
+  prepare-release:
+    name: Prepare draft release
+    needs: [validate, quality]
+    if: ${{ needs.validate.outputs.is-release == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Create or verify draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ needs.validate.outputs.prerelease }}
+          TAG: ${{ needs.validate.outputs.label }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            is_draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)
+            if [ "$is_draft" != "true" ]; then
+              echo "::error::Release $TAG is already published and cannot be replaced"
+              exit 1
+            fi
+            echo "Reusing existing draft release $TAG"
+            exit 0
+          fi
+
+          args=(--repo "$GITHUB_REPOSITORY" --verify-tag --draft --generate-notes --title "$TAG")
+          if [ "$PRERELEASE" = "true" ]; then
+            args+=(--prerelease)
+          fi
+          gh release create "$TAG" "${args[@]}"
+
+  build:
+    name: Build (${{ matrix.target }})
+    needs: [validate, quality, prepare-release]
+    if: >-
+      ${{ always() && needs.validate.result == 'success' && needs.quality.result == 'success' &&
+          (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            build-tool: cross
+            archive: tar.gz
+            runnable: true
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+            build-tool: cross
+            archive: tar.gz
+            runnable: false
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            build-tool: cross
+            archive: tar.gz
+            runnable: true
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-latest
+            build-tool: cross
+            archive: tar.gz
+            runnable: false
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            build-tool: cargo
+            archive: tar.gz
+            runnable: true
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            build-tool: cargo
+            archive: tar.gz
+            runnable: true
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            build-tool: cargo
+            archive: zip
+            runnable: true
+          - target: aarch64-pc-windows-msvc
+            runner: windows-latest
+            build-tool: cargo
+            archive: zip
+            runnable: false
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      ARCHIVE_NAME: riff-${{ needs.validate.outputs.label }}-${{ matrix.target }}.${{ matrix.archive }}
+      TARGET: ${{ matrix.target }}
+      VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate.outputs.checkout-ref }}
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: release-${{ matrix.target }}
+      - name: Install Cross
+        if: matrix.build-tool == 'cross'
+        run: cargo install cross --version 0.2.5 --locked
+      - name: Install Rust target
+        if: matrix.build-tool == 'cargo'
+        run: rustup target add ${{ matrix.target }} --toolchain 1.98.0
+      - name: Build Unix binary
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          BUILD_TOOL: ${{ matrix.build-tool }}
+        run: |
+          set -euo pipefail
+          "$BUILD_TOOL" build --release --locked --target "$TARGET" --package riff --bin riff
+          file "target/$TARGET/release/riff"
+      - name: Build Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo build --release --locked --target $env:TARGET --package riff --bin riff
+          if (-not (Test-Path "target/$env:TARGET/release/riff.exe")) {
+            throw "Release binary was not produced"
+          }
+      - name: Smoke-test Unix binary
+        if: runner.os != 'Windows' && matrix.runnable
+        shell: bash
+        run: |
+          set -euo pipefail
+          "target/$TARGET/release/riff" --version | grep -F "$VERSION"
+      - name: Smoke-test Windows binary
+        if: runner.os == 'Windows' && matrix.runnable
+        shell: pwsh
+        run: |
+          $versionOutput = & "target/$env:TARGET/release/riff.exe" --version
+          if ($versionOutput -notmatch [regex]::Escape($env:VERSION)) {
+            throw "Version output '$versionOutput' does not contain $env:VERSION"
+          }
+      - name: Archive Unix binary
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          tar -czf "dist/$ARCHIVE_NAME" -C "target/$TARGET/release" riff
+          contents=$(tar -tzf "dist/$ARCHIVE_NAME")
+          if [ "$contents" != "riff" ]; then
+            echo "::error::Unexpected archive contents: $contents"
+            exit 1
+          fi
+      - name: Archive Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path "target/$env:TARGET/release/riff.exe" -DestinationPath "dist/$env:ARCHIVE_NAME"
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [System.IO.Compression.ZipFile]::OpenRead("dist/$env:ARCHIVE_NAME")
+          try {
+            $entries = @($archive.Entries | ForEach-Object { $_.FullName })
+            if ($entries.Count -ne 1 -or $entries[0] -ne "riff.exe") {
+              throw "Unexpected archive contents: $($entries -join ', ')"
+            }
+          } finally {
+            $archive.Dispose()
+          }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-${{ matrix.target }}
+          path: dist/${{ env.ARCHIVE_NAME }}
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish release
+    needs: [validate, quality, prepare-release, build]
+    if: >-
+      ${{ always() && needs.validate.result == 'success' && needs.quality.result == 'success' &&
+          needs.build.result == 'success' &&
+          (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Verify release bundle and write checksums
+        shell: bash
+        env:
+          LABEL: ${{ needs.validate.outputs.label }}
+        run: |
+          set -euo pipefail
+
+          targets=(
+            x86_64-unknown-linux-gnu
+            aarch64-unknown-linux-gnu
+            x86_64-unknown-linux-musl
+            aarch64-unknown-linux-musl
+            x86_64-apple-darwin
+            aarch64-apple-darwin
+            x86_64-pc-windows-msvc
+            aarch64-pc-windows-msvc
+          )
+          for target in "${targets[@]}"; do
+            extension=tar.gz
+            if [[ "$target" == *-windows-* ]]; then
+              extension=zip
+            fi
+            test -f "dist/riff-${LABEL}-${target}.${extension}"
+          done
+
+          count=$(find dist -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) | wc -l)
+          if [ "$count" -ne 8 ]; then
+            echo "::error::Expected 8 release archives, found $count"
+            exit 1
+          fi
+
+          (
+            cd dist
+            sha256sum ./*.tar.gz ./*.zip | sort -k2 > SHA256SUMS
+          )
+          cat dist/SHA256SUMS
+      - name: Attest release bundle
+        if: >-
+          ${{ github.event.repository.visibility == 'public' ||
+              vars.ENABLE_PRIVATE_ATTESTATIONS == 'true' }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/SHA256SUMS
+      - name: Upload dry-run bundle
+        if: needs.validate.outputs.is-release != 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: riff-${{ needs.validate.outputs.label }}-release-bundle
+          path: dist
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload release assets
+        if: needs.validate.outputs.is-release == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.label }}
+        run: gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+      - name: Publish stable release
+        if: >-
+          ${{ needs.validate.outputs.is-release == 'true' &&
+              needs.validate.outputs.prerelease != 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.label }}
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+      - name: Publish prerelease
+        if: >-
+          ${{ needs.validate.outputs.is-release == 'true' &&
+              needs.validate.outputs.prerelease == 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.label }}
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease

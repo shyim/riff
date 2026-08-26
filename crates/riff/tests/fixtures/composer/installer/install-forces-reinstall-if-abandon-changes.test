@@ -1,0 +1,42 @@
+--TEST--
+Install triggers a reinstall of packages that have outdated information if their abandoned state changed
+--COMPOSER--
+{
+    "require": {
+        "a/a": "1.0.0"
+    }
+}
+--INSTALLED--
+[
+    {
+        "name": "a/a", "version": "1.0.0", "type": "library", "abandoned": "old-replacement"
+    }
+]
+--LOCK--
+{
+    "packages": [
+        {
+            "name": "a/a", "version": "1.0.0",
+            "type": "library",
+            "abandoned": "replacement"
+        }
+    ],
+    "packages-dev": [],
+    "aliases": [],
+    "minimum-stability": "stable",
+    "stability-flags": {},
+    "prefer-stable": false,
+    "prefer-lowest": false,
+    "platform": {},
+    "platform-dev": {}
+}
+--EXPECT-INSTALLED--
+[
+    {
+        "name": "a/a", "version": "1.0.0", "type": "library", "abandoned": "replacement"
+    }
+]
+--RUN--
+install
+--EXPECT--
+Upgrading a/a (1.0.0 => 1.0.0)

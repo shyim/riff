@@ -1,0 +1,8 @@
+{
+  "name": "acme/lock-disabled",
+  "description": "A package with locking disabled",
+  "license": "MIT",
+  "config": {
+    "lock": false
+  }
+}

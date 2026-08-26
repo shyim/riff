@@ -1,0 +1,8 @@
+{
+  "name": "acme/missing-requirement",
+  "description": "A package with a missing locked requirement",
+  "license": "MIT",
+  "require": {
+    "vendor/missing": "^1.0"
+  }
+}
