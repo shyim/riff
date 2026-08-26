@@ -37,13 +37,16 @@ or execute an `@php` project script.
 
 ![Symfony Demo install benchmark](docs/assets/symfony-demo-install.svg)
 
-This is a single-run, local wall-clock snapshot on 2026-08-26 using the
-[`symfony/demo`](https://github.com/symfony/demo) lock file (153 packages),
-PHP 8.5.9, Composer 2.10.2, and Riff 0.0.1. Each tool installed into a fresh
-working tree with `install --no-interaction --no-progress`. Cold runs used an
-empty, isolated cache, so package ZIP archives were downloaded; warm runs used
-the archive cache populated by that tool's cold run. Results will vary by
-machine and network conditions.
+These are local wall-clock medians measured on 2026-08-26 using
+[`symfony/demo`](https://github.com/symfony/demo) at commit `920d86d` (153
+packages), PHP 8.5.9, Composer 2.10.2, and Riff 0.0.2. Each tool installed into
+a fresh working tree with `install` plus `--prefer-dist`, `--no-interaction`,
+`--no-progress`, `--no-plugins`, `--no-scripts`, and `--no-ansi`; Riff also used
+`--no-audit` because Composer does not audit on install by default. The tools
+alternated order across three cold-cache runs and five warm-cache runs. Cold
+runs used empty, isolated caches, so package ZIP archives were downloaded; warm
+runs reused only the archive cache populated by the final cold run. Results
+will vary by machine and network conditions.
 
 ## Install a release binary
 
