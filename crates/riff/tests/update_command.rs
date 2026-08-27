@@ -202,6 +202,98 @@ fn write_json(path: &Path, value: &Value) {
     std::fs::write(path, serde_json::to_vec_pretty(value).unwrap()).unwrap();
 }
 
+#[test]
+fn update_ignore_platform_requirements_keeps_cached_download_metadata() {
+    let project = tempfile::tempdir().unwrap();
+    let repository = project.path().join("repository");
+    let package_source = project.path().join("package-source");
+    std::fs::create_dir_all(&package_source).unwrap();
+    write_json(
+        &repository.join("packages.json"),
+        &json!({
+            "metadata-url": format!(
+                "file://{}/p2/%package%.json",
+                repository.display()
+            ),
+            "available-packages": ["acme/package"]
+        }),
+    );
+    write_json(
+        &repository.join("p2/acme/package.json"),
+        &json!({
+            "packages": {
+                "acme/package": [{
+                    "name": "acme/package",
+                    "version": "1.0.0",
+                    "version_normalized": "1.0.0.0",
+                    "type": "library",
+                    "require": {"php": "<8.0"},
+                    "dist": {
+                        "type": "path",
+                        "url": package_source.display().to_string(),
+                        "reference": "fixture-reference"
+                    }
+                }]
+            }
+        }),
+    );
+    write_json(
+        &project.path().join("composer.json"),
+        &json!({
+            "name": "fixture/root",
+            "repositories": [
+                {"type": "composer", "url": format!("file://{}", repository.display())},
+                {"packagist.org": false}
+            ],
+            "require": {"acme/package": "^1.0"}
+        }),
+    );
+
+    let run = || {
+        let mut command = Command::cargo_bin("riff").unwrap();
+        command
+            .env("COMPOSER_HOME", project.path().join("composer-home"))
+            .env("RIFF_CACHE_DIR", project.path().join("cache"))
+            .args([
+                "install",
+                "--ignore-platform-reqs",
+                "--download-only",
+                "--no-audit",
+                "--no-scripts",
+                "--no-plugins",
+                "-d",
+            ])
+            .arg(project.path())
+            .output()
+            .unwrap()
+    };
+
+    let first = run();
+    assert!(
+        first.status.success(),
+        "first update failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&first.stdout),
+        String::from_utf8_lossy(&first.stderr)
+    );
+    std::fs::remove_file(project.path().join("composer.lock")).unwrap();
+
+    let cached = run();
+    assert!(
+        cached.status.success(),
+        "cached update failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&cached.stdout),
+        String::from_utf8_lossy(&cached.stderr)
+    );
+    let lock: Value =
+        serde_json::from_slice(&std::fs::read(project.path().join("composer.lock")).unwrap())
+            .unwrap();
+    assert_eq!(lock["packages"][0]["dist"]["type"], "path");
+    assert_eq!(
+        lock["packages"][0]["dist"]["reference"],
+        "fixture-reference"
+    );
+}
+
 fn update_project(versions: &[&str]) -> tempfile::TempDir {
     let project = tempfile::tempdir().unwrap();
     write_json(

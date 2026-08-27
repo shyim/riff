@@ -518,6 +518,11 @@ impl Installer {
         // Preserve repository name batches so deterministic ordering only has
         // to sort versions within each package name.
         let mut package_batches: BTreeMap<CompactString, Vec<Arc<Package>>> = BTreeMap::new();
+        // Platform-requirement filtering clones the solver projection. Retain
+        // the repository-owned Arc so deferred install metadata can still be
+        // hydrated after the solver selects the transformed package.
+        let mut solver_package_hydration_sources: FastHashMap<usize, Arc<Package>> =
+            FastHashMap::new();
         let mut canonical_priority_blocks = BTreeSet::new();
 
         if options.update_mirrors {
@@ -652,12 +657,16 @@ impl Installer {
                             if options.ignore_platform_requirements.all
                                 || !options.ignore_platform_requirements.requirements.is_empty()
                             {
+                                let hydration_source = Arc::clone(&package);
                                 let mut package = package.as_ref().clone();
                                 filter_package_platform_requirements(
                                     &mut package,
                                     &options.ignore_platform_requirements,
                                 );
-                                Arc::new(package)
+                                let package = Arc::new(package);
+                                solver_package_hydration_sources
+                                    .insert(Arc::as_ptr(&package) as usize, hydration_source);
+                                package
                             } else {
                                 package
                             }
@@ -791,7 +800,10 @@ impl Installer {
             packages.sort_by(|a, b| a.version.cmp(&b.version));
             for package in packages {
                 let package = if let Some(reference) = root_references.get(name.as_str()) {
-                    let mut package = package.as_ref().clone();
+                    let hydration_source = solver_package_hydration_sources
+                        .get(&(Arc::as_ptr(&package) as usize))
+                        .unwrap_or(&package);
+                    let mut package = repo_manager.hydrate_package(hydration_source);
                     package.set_references(reference);
                     Arc::new(package)
                 } else {
@@ -1140,10 +1152,13 @@ impl Installer {
             .packages
             .iter()
             .map(|package| {
+                let hydration_source = solver_package_hydration_sources
+                    .get(&(Arc::as_ptr(package) as usize))
+                    .unwrap_or(package);
                 let mut package = if use_dry_run_projection {
-                    repo_manager.hydrate_package_for_transaction(package)
+                    repo_manager.hydrate_package_for_transaction(hydration_source)
                 } else {
-                    repo_manager.hydrate_package(package)
+                    repo_manager.hydrate_package(hydration_source)
                 };
                 if options.update_mirrors {
                     if let Some(locked) = self.riff.lockfile.as_ref().and_then(|lock| {
