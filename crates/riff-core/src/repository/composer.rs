@@ -210,6 +210,9 @@ pub struct ComposerRepository {
     dist_mirrors: RwLock<Vec<DistMirror>>,
     /// Whether the root server file has been loaded
     root_loaded: RwLock<bool>,
+    /// Serializes repository initialization so concurrent package lookups do not
+    /// all fetch and parse the root server file independently.
+    root_loading_lock: tokio::sync::Mutex<()>,
     /// Repository-advertised filter-list capabilities.
     filter_information: RwLock<Option<ComposerRepositoryFilterInformation>>,
     /// Repository-advertised security advisory capabilities.
@@ -275,6 +278,7 @@ impl ComposerRepository {
             source_mirrors: RwLock::new(HashMap::new()),
             dist_mirrors: RwLock::new(Vec::new()),
             root_loaded: RwLock::new(false),
+            root_loading_lock: tokio::sync::Mutex::new(()),
             filter_information: RwLock::new(None),
             security_advisory_information: RwLock::new(None),
             security_advisories: RwLock::new(BTreeMap::new()),
@@ -403,6 +407,11 @@ impl ComposerRepository {
     }
 
     async fn load_root_server_file(&self) -> Result<(), String> {
+        if *self.root_loaded.read().await {
+            return Ok(());
+        }
+
+        let _loading_guard = self.root_loading_lock.lock().await;
         if *self.root_loaded.read().await {
             return Ok(());
         }
@@ -3503,6 +3512,68 @@ mod tests {
     // ============================================================================
     // Tests for root server file parsing
     // ============================================================================
+
+    #[tokio::test]
+    async fn concurrent_package_lookups_initialize_repository_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+        use tokio::sync::Barrier;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let server_request_count = Arc::clone(&request_count);
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                server_request_count.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(async move {
+                    let mut request = Vec::new();
+                    let mut buffer = [0_u8; 1024];
+                    while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                        let read = stream.read(&mut buffer).await.unwrap();
+                        if read == 0 {
+                            return;
+                        }
+                        request.extend_from_slice(&buffer[..read]);
+                    }
+
+                    // Keep the first initialization in flight long enough for every
+                    // package lookup to reach the repository concurrently.
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    let body = r#"{"packages": {}}"#;
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    stream.write_all(response.as_bytes()).await.unwrap();
+                });
+            }
+        });
+
+        let repository = Arc::new(ComposerRepository::new("test", format!("http://{address}")));
+        const LOOKUPS: usize = 24;
+        let barrier = Arc::new(Barrier::new(LOOKUPS + 1));
+        let mut lookups = tokio::task::JoinSet::new();
+        for _ in 0..LOOKUPS {
+            let repository = Arc::clone(&repository);
+            let barrier = Arc::clone(&barrier);
+            lookups.spawn(async move {
+                barrier.wait().await;
+                repository.load_root_server_file().await
+            });
+        }
+
+        barrier.wait().await;
+        while let Some(result) = lookups.join_next().await {
+            result.unwrap().unwrap();
+        }
+
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+        server.abort();
+    }
 
     #[test]
     fn test_parse_root_file_with_metadata_url() {

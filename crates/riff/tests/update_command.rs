@@ -344,6 +344,26 @@ Installing vulnerable/pkg ({version})
     fixture("--no-security-blocking", "1.1.0");
 }
 
+#[test]
+fn composer_update_groups_advisory_diagnostics_when_every_candidate_is_blocked() {
+    run_fixture(
+        r#"
+--TEST--
+Security policy failures summarize excluded candidate versions
+--COMPOSER--
+{"repositories":[{"type":"package","package":[{"name":"vulnerable/pkg","version":"1.0.0","type":"metapackage"},{"name":"vulnerable/pkg","version":"1.1.0","type":"metapackage"}],"security-advisories":{"vulnerable/pkg":[{"advisoryId":"PKSA-test-001","packageName":"vulnerable/pkg","affectedVersions":">=1.0.0,<2.0.0"}]}}],"require":{"vulnerable/pkg":"^1.0"}}
+--RUN--
+update --no-audit
+--EXPECT-EXIT-CODE--
+2
+--EXPECT-OUTPUT--
+Package vulnerable/pkg: 2 candidate versions were excluded by 1 security advisory (PKSA-test-001).
+--EXPECT--
+
+"#,
+    );
+}
+
 // Ported from Composer\Test\Command\UpdateCommandTest::testNoBlockingAllowsMalwareFlaggedPackages.
 #[test]
 fn composer_update_no_blocking_controls_malware_exclusion() {

@@ -11,7 +11,7 @@ use std::collections::{
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
-use super::dependency_policy::{PackagePolicy, PolicyPhase};
+use super::dependency_policy::{PackagePolicy, PolicyPhase, PolicyViolation};
 use super::suggestions::SuggestedPackagesReporter;
 use crate::autoload::{
     get_head_commit, AutoloadConfig, AutoloadGenerator, ClassMapGenerator, PackageAutoload,
@@ -37,6 +37,63 @@ use tokio::sync::Semaphore;
 
 pub struct Installer {
     riff: Riff,
+}
+
+#[derive(Default)]
+struct PolicyDiagnostics {
+    advisories: BTreeMap<String, AdvisoryDiagnostics>,
+    other: BTreeSet<String>,
+}
+
+#[derive(Default)]
+struct AdvisoryDiagnostics {
+    versions: BTreeSet<String>,
+    identifiers: BTreeSet<String>,
+}
+
+impl PolicyDiagnostics {
+    fn record(&mut self, package: &Package, violation: PolicyViolation) {
+        match violation {
+            PolicyViolation::Advisory(advisory) => {
+                let summary = self.advisories.entry(package.name.clone()).or_default();
+                summary.versions.insert(package.pretty_version().to_owned());
+                summary.identifiers.insert(advisory.advisory_id);
+            }
+            violation => {
+                self.other.insert(violation.diagnostic(package));
+            }
+        }
+    }
+
+    fn lines(&self) -> Vec<String> {
+        let mut lines = Vec::with_capacity(self.advisories.len() + self.other.len());
+        for (package, summary) in &self.advisories {
+            let version_count = summary.versions.len();
+            let advisory_count = summary.identifiers.len();
+            let identifiers = summary
+                .identifiers
+                .iter()
+                .take(5)
+                .cloned()
+                .collect::<Vec<_>>();
+            let omitted = advisory_count.saturating_sub(identifiers.len());
+            let mut identifier_list = identifiers.join(", ");
+            if omitted > 0 {
+                identifier_list.push_str(&format!(", and {omitted} more"));
+            }
+            lines.push(format!(
+                "Package {package}: {version_count} candidate {} excluded by {advisory_count} security {} ({identifier_list}).",
+                if version_count == 1 { "version was" } else { "versions were" },
+                if advisory_count == 1 { "advisory" } else { "advisories" },
+            ));
+        }
+        lines.extend(self.other.iter().cloned());
+        lines
+    }
+
+    fn has_advisories(&self) -> bool {
+        !self.advisories.is_empty()
+    }
 }
 
 const MAX_CONCURRENT_CLASSMAP_SCANS: usize = 4;
@@ -970,7 +1027,7 @@ impl Installer {
         for warning in package_policy.unreachable_repositories() {
             crate::warnln!("Warning: {warning}");
         }
-        let mut policy_diagnostics = BTreeSet::new();
+        let mut policy_diagnostics = PolicyDiagnostics::default();
         for package_id in pool.all_package_ids() {
             let Some(package) = pool
                 .entry(package_id)
@@ -1002,7 +1059,7 @@ impl Installer {
             }
             request.exclude(Arc::clone(package));
             for violation in violations {
-                policy_diagnostics.insert(violation.diagnostic(package));
+                policy_diagnostics.record(package, violation);
             }
         }
 
@@ -1025,8 +1082,13 @@ impl Installer {
                         "  {root_name} is the root package and cannot be modified during dependency resolution."
                     );
                 }
-                for diagnostic in &policy_diagnostics {
+                for diagnostic in policy_diagnostics.lines() {
                     crate::errln!("{} {diagnostic}", style("Error:").red().bold());
+                }
+                if policy_diagnostics.has_advisories() {
+                    crate::errln!(
+                        "  Run `riff audit` for full advisory details, or use --no-blocking to disable policy blocking."
+                    );
                 }
                 let mut temporary_constraints =
                     options.temporary_constraints.iter().collect::<Vec<_>>();
@@ -3448,6 +3510,36 @@ fn apply_plugin_package_layouts(riff: &Riff, packages: &mut [PackageAutoload]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn policy_diagnostics_group_candidate_versions_and_cap_advisory_ids() {
+        let advisory = |id: &str| {
+            PolicyViolation::Advisory(crate::json::SecurityAdvisory {
+                advisory_id: id.to_owned(),
+                package_name: "vendor/package".to_owned(),
+                affected_versions: "*".to_owned(),
+                source: None,
+                title: None,
+                cve: None,
+                link: None,
+                severity: None,
+                reported_at: None,
+                sources: None,
+            })
+        };
+        let first = Package::new("vendor/package", "1.0.0");
+        let second = Package::new("vendor/package", "1.1.0");
+        let mut diagnostics = PolicyDiagnostics::default();
+        for id in ["ADV-1", "ADV-2", "ADV-3", "ADV-4", "ADV-5", "ADV-6"] {
+            diagnostics.record(&first, advisory(id));
+        }
+        diagnostics.record(&second, advisory("ADV-1"));
+
+        assert_eq!(
+            diagnostics.lines(),
+            ["Package vendor/package: 2 candidate versions were excluded by 6 security advisories (ADV-1, ADV-2, ADV-3, ADV-4, ADV-5, and 1 more)."]
+        );
+    }
 
     #[test]
     fn platform_check_uses_strongest_production_php_lower_bound() {
