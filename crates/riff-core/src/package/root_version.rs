@@ -4,10 +4,10 @@
 //! based on git branch, branch-alias configuration, and environment variables.
 //!
 //! The priority order is:
-//! 1. COMPOSER_ROOT_VERSION environment variable
-//! 2. Explicit version in composer.json
-//! 3. Branch alias matching the current git branch
-//! 4. Git branch name converted to a dev version
+//! 1. Explicit version in composer.json
+//! 2. COMPOSER_ROOT_VERSION environment variable
+//! 3. VCS version, including an exact tag on a detached HEAD
+//! 4. Branch alias matching the detected branch version
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -330,7 +330,41 @@ pub fn detect_root_version_with_non_feature_branches(
     branch_aliases: &HashMap<String, (String, String)>,
     non_feature_branches: &[String],
 ) -> RootVersion {
-    // 1. Check COMPOSER_ROOT_VERSION environment variable
+    detect_root_version_with_process(
+        working_dir,
+        composer_version,
+        branch_aliases,
+        non_feature_branches,
+        SystemVersionGuessProcess,
+    )
+}
+
+fn detect_root_version_with_process<P: VersionGuessProcess>(
+    working_dir: &Path,
+    composer_version: Option<&str>,
+    branch_aliases: &HashMap<String, (String, String)>,
+    non_feature_branches: &[String],
+    process: P,
+) -> RootVersion {
+    // Composer only consults COMPOSER_ROOT_VERSION when composer.json does not
+    // declare a version, so an explicit package version takes precedence.
+    if let Some(explicit_version) = composer_version {
+        let explicit_version = explicit_version.trim();
+        if !explicit_version.is_empty() {
+            let (version, pretty_version) = normalize_version(explicit_version);
+            log::debug!(
+                "Root version from composer.json: {} (normalized: {})",
+                explicit_version,
+                version
+            );
+            return RootVersion {
+                version,
+                pretty_version,
+                source: RootVersionSource::RiffManifest,
+            };
+        }
+    }
+
     if let Ok(env_version) = std::env::var("COMPOSER_ROOT_VERSION") {
         let env_version = env_version.trim();
         if !env_version.is_empty() {
@@ -349,39 +383,16 @@ pub fn detect_root_version_with_non_feature_branches(
         }
     }
 
-    // 2. Check explicit version in composer.json
-    if let Some(explicit_version) = composer_version {
-        let explicit_version = explicit_version.trim();
-        if !explicit_version.is_empty() {
-            let (version, pretty_version) = normalize_version(explicit_version);
-            log::debug!(
-                "Root version from composer.json: {} (normalized: {})",
-                explicit_version,
-                version
-            );
-            return RootVersion {
-                version,
-                pretty_version,
-                source: RootVersionSource::RiffManifest,
-            };
-        }
-    }
-
-    // 3. Try to get git branch and match against branch-alias
-    if let Some(branch) = get_git_branch(working_dir) {
-        log::debug!("Current git branch: {}", branch);
-
-        // Normalize the branch to a dev version for matching
-        let dev_branch = normalize_branch_to_dev(&branch);
-        log::trace!("Normalized branch for alias lookup: {}", dev_branch);
-
-        // Check if there's a branch alias for this branch
-        if let Some((alias_normalized, alias_pretty)) = branch_aliases.get(&dev_branch) {
-            // Fully normalize the version using the semver parser
+    let guess_options = VersionGuessOptions {
+        infer_feature_version: true,
+        non_feature_branches: non_feature_branches.to_vec(),
+    };
+    if let Some(guess) = VersionGuesser::with_process(process).guess(working_dir, &guess_options) {
+        if let Some((alias_normalized, alias_pretty)) = branch_aliases.get(&guess.pretty_version) {
             let (version, pretty_version) = normalize_version(alias_normalized);
             log::debug!(
                 "Root version from branch-alias: {} -> {} (normalized: {}, pretty: {})",
-                dev_branch,
+                guess.pretty_version,
                 alias_normalized,
                 version,
                 pretty_version
@@ -393,28 +404,19 @@ pub fn detect_root_version_with_non_feature_branches(
             };
         }
 
-        // 4. Feature branches inherit the nearest non-feature branch version,
-        // while explicitly configured non-feature branches keep their own.
-        let version_branch = nearest_version_branch(
-            &branch,
-            git_branch_distances(working_dir, &branch),
-            non_feature_branches,
-        );
-        let dev_branch = normalize_branch_to_dev(&version_branch);
-        let (version, pretty_version) = normalize_version(&dev_branch);
         log::debug!(
-            "Root version from git branch: {} (normalized: {})",
-            branch,
-            version
+            "Root version from VCS: {} (normalized: {})",
+            guess.pretty_version,
+            guess.version
         );
         return RootVersion {
-            version,
-            pretty_version,
+            version: guess.version,
+            pretty_version: guess.pretty_version,
             source: RootVersionSource::GitBranch,
         };
     }
 
-    // 5. Default fallback. This intentionally remains visibly synthetic so it
+    // Default fallback. This intentionally remains visibly synthetic so it
     // is never mistaken for a declared or VCS-derived release.
     log::debug!("Root version defaulting to {DEFAULT_ROOT_PRETTY_VERSION}");
     RootVersion {
@@ -468,51 +470,6 @@ fn is_feature_branch(branch: &str, non_feature_branches: &[String]) -> bool {
     !non_feature_branches.iter().any(|pattern| {
         Regex::new(&format!("^(?:{pattern})$")).is_ok_and(|pattern| pattern.is_match(branch))
     })
-}
-
-fn git_branch_distances(working_dir: &Path, current: &str) -> Vec<(String, usize)> {
-    let Ok(output) = Command::new("git")
-        .args([
-            "for-each-ref",
-            "--format=%(refname:short)",
-            "refs/heads",
-            "refs/remotes/origin",
-            "refs/remotes/upstream",
-        ])
-        .current_dir(working_dir)
-        .output()
-    else {
-        return Vec::new();
-    };
-    if !output.status.success() {
-        return Vec::new();
-    }
-
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|branch| {
-            let branch = branch
-                .strip_prefix("origin/")
-                .or_else(|| branch.strip_prefix("upstream/"))
-                .unwrap_or(branch);
-            if branch == current || branch == "HEAD" {
-                return None;
-            }
-            let range = format!("{branch}..{current}");
-            let output = Command::new("git")
-                .args(["rev-list", "--count", &range])
-                .current_dir(working_dir)
-                .output()
-                .ok()?;
-            let distance = output.status.success().then(|| {
-                String::from_utf8_lossy(&output.stdout)
-                    .trim()
-                    .parse::<usize>()
-                    .ok()
-            })??;
-            Some((branch.to_string(), distance))
-        })
-        .collect()
 }
 
 /// Gets the current git branch name.
@@ -637,6 +594,17 @@ mod tests {
     }
 
     #[test]
+    fn composer_root_package_loader_prefers_an_explicit_version_over_the_environment() {
+        let _guard = environment_lock();
+        let _environment = EnvironmentGuard::set("COMPOSER_ROOT_VERSION", Some("9.9.9"));
+
+        let result = detect_root_version(Path::new("/nonexistent"), Some("2.0.0"), &HashMap::new());
+
+        assert_eq!(result.source, RootVersionSource::RiffManifest);
+        assert_eq!(result.pretty_version, "2.0.0");
+    }
+
+    #[test]
     fn composer_version_guesser_normalizes_root_version_from_environment() {
         let _guard = environment_lock();
         let _environment = EnvironmentGuard::set("COMPOSER_ROOT_VERSION", None);
@@ -741,11 +709,19 @@ mod tests {
     fn composer_version_guesser_numeric_branches_show_nicely() {
         let _guard = environment_lock();
         let _environment = EnvironmentGuard::set("COMPOSER_ROOT_VERSION", None);
-        let temp = tempfile::tempdir().unwrap();
-        std::fs::create_dir(temp.path().join(".git")).unwrap();
-        std::fs::write(temp.path().join(".git/HEAD"), "ref: refs/heads/1.5\n").unwrap();
+        let process = MockVersionGuessProcess::default().with_output(
+            "git branch -a --no-color --no-abbrev -v",
+            true,
+            &format!("* 1.5 {FIRST_COMMIT} Commit message\n"),
+        );
 
-        let root = detect_root_version(temp.path(), None, &HashMap::new());
+        let root = detect_root_version_with_process(
+            Path::new("dummy/path"),
+            None,
+            &HashMap::new(),
+            &[],
+            process,
+        );
 
         assert_eq!(root.source, RootVersionSource::GitBranch);
         assert_eq!(root.pretty_version, "1.5.x-dev");
@@ -756,11 +732,19 @@ mod tests {
     fn composer_version_guesser_invalid_tag_becomes_branch_version() {
         let _guard = environment_lock();
         let _environment = EnvironmentGuard::set("COMPOSER_ROOT_VERSION", None);
-        let temp = tempfile::tempdir().unwrap();
-        std::fs::create_dir(temp.path().join(".git")).unwrap();
-        std::fs::write(temp.path().join(".git/HEAD"), "ref: refs/heads/foo\n").unwrap();
+        let process = MockVersionGuessProcess::default().with_output(
+            "git branch -a --no-color --no-abbrev -v",
+            true,
+            &format!("* foo {FIRST_COMMIT} Commit message\n"),
+        );
 
-        let root = detect_root_version(temp.path(), None, &HashMap::new());
+        let root = detect_root_version_with_process(
+            Path::new("dummy/path"),
+            None,
+            &HashMap::new(),
+            &[],
+            process,
+        );
 
         assert_eq!(root.source, RootVersionSource::GitBranch);
         assert_eq!(root.version, "dev-foo");
@@ -1008,6 +992,32 @@ mod tests {
             assert_eq!(guess.version, expected);
             assert_eq!(guess.pretty_version, tag);
         }
+    }
+
+    #[test]
+    fn composer_root_package_loader_uses_an_exact_tag_on_detached_head() {
+        let _guard = environment_lock();
+        let _environment = EnvironmentGuard::set("COMPOSER_ROOT_VERSION", None);
+        let tag = "v6.7.13.1";
+        let process = MockVersionGuessProcess::default()
+            .with_output(
+                "git branch -a --no-color --no-abbrev -v",
+                true,
+                &format!("* (HEAD detached at {tag}) {FIRST_COMMIT} Commit message\n"),
+            )
+            .with_output("git describe --exact-match --tags", true, tag);
+
+        let root = detect_root_version_with_process(
+            Path::new("dummy/path"),
+            None,
+            &HashMap::new(),
+            &[],
+            process,
+        );
+
+        assert_eq!(root.version, "6.7.13.1");
+        assert_eq!(root.pretty_version, tag);
+        assert_eq!(root.source, RootVersionSource::GitBranch);
     }
 
     // Ported from VersionGuesserTest::testRemoteBranchesAreSelected.

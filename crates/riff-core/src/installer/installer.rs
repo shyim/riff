@@ -31,7 +31,7 @@ use crate::package::{
 use crate::policy_config::PolicyScope;
 use crate::repository::InstalledRepository;
 use crate::riff::Riff;
-use crate::solver::{Policy, Pool, Request, Solver, Transaction};
+use crate::solver::{PackageId, Policy, Pool, Request, Solver, Transaction};
 use crate::util::{canonical_package_name, is_platform_package};
 use tokio::sync::Semaphore;
 
@@ -454,7 +454,7 @@ impl Installer {
         // Use add_platform_package to bypass stability filtering (root is always installed)
         let mut root_pkg = create_root_package(manifest, &root_version);
         filter_package_platform_requirements(&mut root_pkg, &options.ignore_platform_requirements);
-        {
+        let root_id = {
             log::debug!(
                 "Root package version: {} (normalized: {})",
                 root_pkg.pretty_version.as_deref().unwrap_or("N/A"),
@@ -464,7 +464,8 @@ impl Installer {
             log::debug!("Root package provides: {:?}", root_pkg.provide);
             let root_id = pool.add_platform_package(root_pkg);
             log::debug!("Added root package to pool with id {}", root_id);
-        }
+            root_id
+        };
 
         // Collect packages that are replaced/provided by root - we don't need to load these
         // from repositories since the root package satisfies them
@@ -1009,8 +1010,10 @@ impl Installer {
             request.update(update_allowlist.iter().cloned().collect());
         }
 
-        let policy_packages = pool
-            .all_package_ids()
+        let policy_package_ids = update_policy_package_ids(&pool, root_id);
+        let policy_packages = policy_package_ids
+            .iter()
+            .copied()
             .filter_map(|package_id| {
                 pool.entry(package_id)
                     .and_then(crate::solver::PoolEntry::as_package)
@@ -1028,7 +1031,7 @@ impl Installer {
             crate::warnln!("Warning: {warning}");
         }
         let mut policy_diagnostics = PolicyDiagnostics::default();
-        for package_id in pool.all_package_ids() {
+        for package_id in policy_package_ids {
             let Some(package) = pool
                 .entry(package_id)
                 .and_then(crate::solver::PoolEntry::as_package)
@@ -3380,6 +3383,19 @@ fn filter_package_platform_requirements(package: &mut Package, filter: &Platform
         .retain(|requirement, _| !is_platform_package(requirement) || !filter.ignores(requirement));
 }
 
+/// Composer never submits the fixed root package or platform packages to its
+/// dependency-policy pool filters.
+fn update_policy_package_ids(pool: &Pool, root_id: PackageId) -> Vec<PackageId> {
+    pool.all_package_ids()
+        .filter(|package_id| *package_id != root_id)
+        .filter(|package_id| {
+            pool.entry(*package_id)
+                .and_then(crate::solver::PoolEntry::as_package)
+                .is_some_and(|package| !is_platform_package(&package.name))
+        })
+        .collect()
+}
+
 fn patch_update_candidate_allowed(lock: Option<&RiffLockfile>, candidate: &Package) -> bool {
     let Some(locked) = lock.and_then(|lock| {
         lock.all_packages()
@@ -3510,6 +3526,16 @@ fn apply_plugin_package_layouts(riff: &Riff, packages: &mut [PackageAutoload]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn update_policy_candidates_exclude_the_root_and_platform_packages() {
+        let mut pool = Pool::new();
+        let root_id = pool.add_platform_package(Package::new("root/package", "1.0.0"));
+        pool.add_platform_package(Package::new("php", "8.4.0"));
+        let dependency_id = pool.add_package(Package::new("vendor/dependency", "1.0.0"));
+
+        assert_eq!(update_policy_package_ids(&pool, root_id), [dependency_id]);
+    }
 
     #[test]
     fn policy_diagnostics_group_candidate_versions_and_cap_advisory_ids() {
