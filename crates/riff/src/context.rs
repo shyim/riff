@@ -1,17 +1,22 @@
 use anyhow::Result;
 use riff_core::config::Config;
-use riff_core::{Package, Platform, RuntimeContext};
+use riff_core::{Output, Package, Platform, RuntimeContext};
 
 /// Runtime and platform information supplied to Riff command execution.
 #[derive(Debug, Clone)]
 pub struct CommandContext {
     runtime: RuntimeContext,
     platform: Platform,
+    output: Output,
 }
 
 impl CommandContext {
     pub fn new(runtime: RuntimeContext, platform: Platform) -> Self {
-        Self { runtime, platform }
+        Self {
+            runtime,
+            platform,
+            output: Output::silent(),
+        }
     }
 
     pub fn runtime(&self) -> &RuntimeContext {
@@ -20,6 +25,15 @@ impl CommandContext {
 
     pub fn platform(&self) -> &Platform {
         &self.platform
+    }
+
+    pub fn output(&self) -> &Output {
+        &self.output
+    }
+
+    pub fn with_output(mut self, output: Output) -> Self {
+        self.output = output;
+        self
     }
 
     pub fn packages(&self, config: &Config) -> Result<Vec<Package>> {

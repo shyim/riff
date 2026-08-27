@@ -49,10 +49,10 @@ pub struct RepositoryArgs {
     pub working_dir: PathBuf,
 }
 
-pub async fn execute(args: RepositoryArgs) -> Result<i32> {
+pub async fn execute(args: RepositoryArgs, context: &crate::CommandContext) -> Result<i32> {
     let global_home = ConfigLoader::new(true).get_composer_home();
     for line in run(args, &global_home)? {
-        riff_core::outln!("{line}");
+        riff_core::outln!(context.output(), "{line}");
     }
     Ok(0)
 }

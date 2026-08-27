@@ -833,7 +833,11 @@ mod tests {
         let rules = generator.generate(&request);
 
         let stats = rules.stats();
-        crate::outln!("Rules generated: {:?}", stats);
+        crate::outln!(
+            crate::output::Output::silent(),
+            "Rules generated: {:?}",
+            stats
+        );
         assert!(stats.total > 0);
     }
 

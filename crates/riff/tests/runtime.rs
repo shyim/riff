@@ -98,6 +98,7 @@ mod unix {
         assert!(output.status.success());
         let stdout = String::from_utf8(output.stdout).unwrap();
         assert!(!stdout.trim().is_empty());
+        assert!(!stdout.contains('\x1b'));
         for line in stdout.lines() {
             let event: serde_json::Value = serde_json::from_str(line).unwrap();
             assert!(event["level"].is_string());
@@ -121,6 +122,30 @@ mod unix {
             .assert()
             .success()
             .stdout("");
+    }
+
+    #[test]
+    fn ansi_flags_are_rendered_per_cli_invocation() {
+        let project = tempfile::tempdir().unwrap();
+        fs::write(
+            project.path().join("composer.json"),
+            r#"{"name":"fixture/project"}"#,
+        )
+        .unwrap();
+
+        let stderr = |flag| {
+            let output = Command::cargo_bin("riff")
+                .unwrap()
+                .args([flag, "run", "missing", "-d"])
+                .arg(project.path())
+                .output()
+                .unwrap();
+            assert_eq!(output.status.code(), Some(1));
+            String::from_utf8(output.stderr).unwrap()
+        };
+
+        assert!(stderr("--ansi").contains("\x1b["));
+        assert!(!stderr("--no-ansi").contains("\x1b["));
     }
 
     #[test]

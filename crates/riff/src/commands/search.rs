@@ -55,6 +55,7 @@ pub async fn execute(args: SearchArgs, context: &CommandContext) -> Result<i32> 
     }
     if !matches!(args.format.as_str(), "text" | "json") {
         riff_core::errln!(
+            context.output(),
             "Unsupported format \"{}\". See help for supported formats.",
             args.format
         );
@@ -87,7 +88,7 @@ pub async fn execute(args: SearchArgs, context: &CommandContext) -> Result<i32> 
         installed,
         Arc::new(PlatformRepository::from_packages(platform_packages)),
     ];
-    let mut manager = RepositoryManager::new();
+    let mut manager = RepositoryManager::new().with_output(context.output().clone());
     for repository in manifest.repositories.as_vec() {
         manager.add_from_json_repository_at(&repository, &working_dir);
     }
@@ -105,7 +106,7 @@ pub async fn execute(args: SearchArgs, context: &CommandContext) -> Result<i32> 
             .search_with_type(&query, mode, args.package_type.as_deref())
             .await;
         if args.verbose > 2 {
-            print_repository_diagnostic(repository.as_ref(), found.len()).await;
+            print_repository_diagnostic(repository.as_ref(), found.len(), context).await;
         }
         for result in found {
             if seen.insert(result.name.clone()) {
@@ -115,9 +116,9 @@ pub async fn execute(args: SearchArgs, context: &CommandContext) -> Result<i32> 
     }
 
     if args.format == "json" {
-        print_json(&results)?;
+        print_json(&results, context)?;
     } else {
-        print_text(&results);
+        print_text(&results, context);
     }
     Ok(0)
 }
@@ -132,7 +133,11 @@ fn packagist_is_disabled(manifest: &RiffManifest) -> bool {
     })
 }
 
-async fn print_repository_diagnostic(repository: &dyn Repository, found: usize) {
+async fn print_repository_diagnostic(
+    repository: &dyn Repository,
+    found: usize,
+    context: &CommandContext,
+) {
     let count = repository.count().await;
     let description = match repository.name() {
         "installed" => format!(
@@ -146,10 +151,15 @@ async fn print_repository_diagnostic(repository: &dyn Repository, found: usize) 
         ),
         name => name.to_owned(),
     };
-    riff_core::outln!("Searched {}, found {} result(s)", description, found);
+    riff_core::outln!(
+        context.output(),
+        "Searched {}, found {} result(s)",
+        description,
+        found
+    );
 }
 
-fn print_json(results: &[SearchResult]) -> Result<()> {
+fn print_json(results: &[SearchResult], context: &CommandContext) -> Result<()> {
     let values: Vec<_> = results
         .iter()
         .map(|result| {
@@ -159,11 +169,15 @@ fn print_json(results: &[SearchResult]) -> Result<()> {
             })
         })
         .collect();
-    riff_core::outln!("{}", serde_json::to_string_pretty(&values)?);
+    riff_core::outln!(
+        context.output(),
+        "{}",
+        serde_json::to_string_pretty(&values)?
+    );
     Ok(())
 }
 
-fn print_text(results: &[SearchResult]) {
+fn print_text(results: &[SearchResult], context: &CommandContext) {
     let width = results
         .iter()
         .map(|result| result.name.chars().count())
@@ -190,9 +204,9 @@ fn print_text(results: &[SearchResult]) {
             (None, None) => String::new(),
         };
         if description.is_empty() {
-            riff_core::outln!("{}", result.name);
+            riff_core::outln!(context.output(), "{}", result.name);
         } else {
-            riff_core::outln!("{:<width$}{}", result.name, description);
+            riff_core::outln!(context.output(), "{:<width$}{}", result.name, description);
         }
     }
 }

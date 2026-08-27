@@ -97,6 +97,7 @@ impl EventListener for ComposerBinPlugin {
             &riff.working_dir,
             &riff.manifest,
             &e.packages,
+            riff.output(),
         )?;
 
         Ok(0)
@@ -114,7 +115,13 @@ impl ComposerCommandHook for ComposerBinPlugin {
         extra_args: &[String],
         context: &ScriptPluginContext<'_>,
     ) -> anyhow::Result<i32> {
-        run_bin_command(command, context.working_dir, extra_args, context.runtime)
+        run_bin_command(
+            command,
+            context.working_dir,
+            extra_args,
+            context.runtime,
+            context.output,
+        )
     }
 }
 
@@ -125,6 +132,7 @@ impl ComposerBinPlugin {
         project_dir: &Path,
         manifest: &RiffManifest,
         _installed_packages: &[Arc<Package>],
+        output: &crate::output::Output,
     ) -> Result<()> {
         let config = BinConfig::from_extra(&manifest.extra);
 
@@ -173,6 +181,7 @@ impl ComposerBinPlugin {
 
                 if let Err(e) = status {
                     crate::errln!(
+                        output,
                         "Warning: Failed to run install in namespace {}: {}",
                         namespace_name,
                         e
@@ -196,6 +205,7 @@ fn run_bin_command(
     project_dir: &Path,
     extra_args: &[String],
     runtime: &RuntimeContext,
+    output: &crate::output::Output,
 ) -> anyhow::Result<i32> {
     let invocation = BinInvocation::parse(command)?;
     let manifest: RiffManifest = serde_json::from_str(
@@ -213,6 +223,7 @@ fn run_bin_command(
             .map(|name| name.to_string_lossy())
             .unwrap_or_default();
         crate::outln!(
+            output,
             "Running composer {} in bin namespace {}",
             invocation.arguments.join(" "),
             namespace
@@ -410,7 +421,8 @@ mod tests {
                 "all install --ansi",
                 root.path(),
                 &[],
-                &RuntimeContext::default()
+                &RuntimeContext::default(),
+                &crate::output::Output::silent(),
             )
             .unwrap(),
             0

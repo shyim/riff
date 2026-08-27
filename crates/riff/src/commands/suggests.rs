@@ -45,7 +45,7 @@ pub struct SuggestsArgs {
     pub working_dir: PathBuf,
 }
 
-pub async fn execute(args: SuggestsArgs) -> Result<i32> {
+pub async fn execute(args: SuggestsArgs, context: &crate::CommandContext) -> Result<i32> {
     let working_dir = args
         .working_dir
         .canonicalize()
@@ -106,7 +106,7 @@ pub async fn execute(args: SuggestsArgs) -> Result<i32> {
 
     let mode = output_mode(&args);
     for line in selected_reporter.render(mode, Some(&installed)) {
-        riff_core::outln!("{line}");
+        riff_core::outln!(context.output(), "{line}");
     }
 
     if restrict_to_direct && !args.list {
@@ -114,6 +114,7 @@ pub async fn execute(args: SuggestsArgs) -> Result<i32> {
         let total = all_reporter.filtered(Some(&installed)).len();
         if total > visible {
             riff_core::outln!(
+                context.output(),
                 "{} additional suggestions by transitive dependencies can be shown with --all",
                 total - visible
             );

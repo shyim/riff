@@ -28,7 +28,7 @@ pub struct HomeArgs {
     pub working_dir: PathBuf,
 }
 
-pub async fn execute(args: HomeArgs) -> Result<i32> {
+pub async fn execute(args: HomeArgs, context: &crate::CommandContext) -> Result<i32> {
     let working_dir = args
         .working_dir
         .canonicalize()
@@ -36,7 +36,10 @@ pub async fn execute(args: HomeArgs) -> Result<i32> {
     let metadata = ProjectPackageMetadata::load(&working_dir).await?;
     let mut packages = args.packages;
     if packages.is_empty() {
-        riff_core::warnln!("No package specified, opening homepage for the root package");
+        riff_core::warnln!(
+            context.output(),
+            "No package specified, opening homepage for the root package"
+        );
         packages.push(metadata.root.name.clone());
     }
 
@@ -44,7 +47,7 @@ pub async fn execute(args: HomeArgs) -> Result<i32> {
     for package_name in packages {
         let matching = metadata.matching(&package_name).collect::<Vec<_>>();
         if matching.is_empty() {
-            riff_core::warnln!("Package {package_name} not found");
+            riff_core::warnln!(context.output(), "Package {package_name} not found");
             exit_code = 1;
         }
 
@@ -54,9 +57,10 @@ pub async fn execute(args: HomeArgs) -> Result<i32> {
             .find(|url| valid_url(url));
         if let Some(url) = url {
             if args.show {
-                riff_core::outln!("{url}");
+                riff_core::outln!(context.output(), "{url}");
             } else if let Err(error) = open_browser(url) {
                 riff_core::warnln!(
+                    context.output(),
                     "No suitable browser opening command found, open yourself: {url} ({error})"
                 );
             }
@@ -66,7 +70,10 @@ pub async fn execute(args: HomeArgs) -> Result<i32> {
             } else {
                 "repository URL"
             };
-            riff_core::warnln!("Invalid or missing {property} for {package_name}");
+            riff_core::warnln!(
+                context.output(),
+                "Invalid or missing {property} for {package_name}"
+            );
             exit_code = 1;
         }
     }

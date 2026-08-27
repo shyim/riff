@@ -1,7 +1,7 @@
 //! Run command - execute scripts defined in composer.json.
 
 use anyhow::{Context, Result};
-use console::style;
+use riff_core::output::style;
 use std::path::PathBuf;
 
 use riff_core::config::Config;
@@ -54,6 +54,7 @@ pub async fn execute(args: RunArgs, context: &CommandContext) -> Result<i32> {
     let json_path = working_dir.join("composer.json");
     if !json_path.exists() {
         riff_core::errln!(
+            context.output(),
             "{} No composer.json found in {}",
             style("Error:").red().bold(),
             working_dir.display()
@@ -69,7 +70,7 @@ pub async fn execute(args: RunArgs, context: &CommandContext) -> Result<i32> {
 
     // If --list or no script specified, show available scripts
     if args.list || args.script.is_none() {
-        return scripts::list_scripts(&manifest);
+        return scripts::list_scripts_with_output(&manifest, context.output());
     }
 
     let script_name = args.script.as_ref().unwrap();
@@ -85,6 +86,7 @@ pub async fn execute(args: RunArgs, context: &CommandContext) -> Result<i32> {
             dev_mode: args.dev || !args.no_dev,
             plugins: &plugins,
             bin_dir: config.get_bin_dir(),
+            output: context.output(),
         },
     )
 }

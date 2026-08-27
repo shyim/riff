@@ -45,12 +45,15 @@ enum PolicyCommandOutcome {
     AlreadyPresent { name: String, url: String },
 }
 
-pub async fn execute(args: PolicyArgs) -> Result<i32> {
+pub async fn execute(args: PolicyArgs, context: &crate::CommandContext) -> Result<i32> {
     let global_home = ConfigLoader::new(true).get_composer_home();
     match run(args, &global_home)? {
         PolicyCommandOutcome::Added => {}
         PolicyCommandOutcome::AlreadyPresent { name, url } => {
-            riff_core::outln!("Source {url} already present in policy {name}");
+            riff_core::outln!(
+                context.output(),
+                "Source {url} already present in policy {name}"
+            );
         }
     }
     Ok(0)

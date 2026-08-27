@@ -65,7 +65,7 @@ pub struct WhyNotArgs {
     pub working_dir: PathBuf,
 }
 
-pub async fn execute_why_not(args: WhyNotArgs) -> Result<i32> {
+pub async fn execute_why_not(args: WhyNotArgs, context: &crate::CommandContext) -> Result<i32> {
     execute(
         WhyArgs {
             package: args.package,
@@ -76,11 +76,16 @@ pub async fn execute_why_not(args: WhyNotArgs) -> Result<i32> {
             working_dir: args.working_dir,
         },
         true,
+        context,
     )
     .await
 }
 
-pub async fn execute(args: WhyArgs, inverted: bool) -> Result<i32> {
+pub async fn execute(
+    args: WhyArgs,
+    inverted: bool,
+    context: &crate::CommandContext,
+) -> Result<i32> {
     let working_dir = args
         .working_dir
         .canonicalize()
@@ -113,6 +118,7 @@ pub async fn execute(args: WhyArgs, inverted: bool) -> Result<i32> {
     if args.locked {
         let Some(lock) = &lock else {
             riff_core::errln!(
+                context.output(),
                 "Error: A valid composer.lock file is required to run this command with --locked"
             );
             return Ok(1);
@@ -151,6 +157,7 @@ pub async fn execute(args: WhyArgs, inverted: bool) -> Result<i32> {
         && (!manifest.require.is_empty() || !manifest.require_dev.is_empty())
     {
         riff_core::errln!(
+            context.output(),
             "Warning: No dependencies installed. Try running install or update, or use --locked."
         );
         return Ok(1);
@@ -177,6 +184,7 @@ pub async fn execute(args: WhyArgs, inverted: bool) -> Result<i32> {
         Ok(query) => query,
         Err(DependencyQueryError::PackageNotFound(package)) => {
             riff_core::errln!(
+                context.output(),
                 "Error: Could not find package \"{}\" in your project",
                 package
             );
@@ -186,7 +194,12 @@ pub async fn execute(args: WhyArgs, inverted: bool) -> Result<i32> {
             constraint,
             message,
         }) => {
-            riff_core::errln!("Error: Invalid constraint '{}': {}", constraint, message);
+            riff_core::errln!(
+                context.output(),
+                "Error: Invalid constraint '{}': {}",
+                constraint,
+                message
+            );
             return Ok(1);
         }
     };
@@ -195,6 +208,7 @@ pub async fn execute(args: WhyArgs, inverted: bool) -> Result<i32> {
         if let Some(package) = &query.installed_match {
             let configured = configured_platform.contains(&needle.to_ascii_lowercase());
             riff_core::outln!(
+                context.output(),
                 "Package \"{} {}\" found in version \"{}\"{}.",
                 needle,
                 constraint_str,
@@ -209,6 +223,7 @@ pub async fn execute(args: WhyArgs, inverted: bool) -> Result<i32> {
     } else if inverted {
         if let Some(package) = &query.installed_match {
             riff_core::outln!(
+                context.output(),
                 "Package \"{}\" {} is already installed! To find out why, run `riff why {}`",
                 needle,
                 display_version(package),
@@ -217,7 +232,7 @@ pub async fn execute(args: WhyArgs, inverted: bool) -> Result<i32> {
             return Ok(0);
         }
         if query.constraint_unavailable {
-            riff_core::errln!(
+            riff_core::errln!(context.output(),
                 "Package \"{}\" could not be found with constraint \"{}\", results below will most likely be incomplete.",
                 needle,
                 constraint_str
@@ -238,6 +253,7 @@ pub async fn execute(args: WhyArgs, inverted: bool) -> Result<i32> {
             String::new()
         };
         riff_core::outln!(
+            context.output(),
             "There is no installed package depending on \"{}\"{}",
             needle,
             extra
@@ -249,9 +265,9 @@ pub async fn execute(args: WhyArgs, inverted: bool) -> Result<i32> {
         }
     } else {
         if args.tree {
-            print_tree(results, &query.inspected_packages[0]);
+            print_tree(results, &query.inspected_packages[0], context.output());
         } else {
-            print_table(results);
+            print_table(results, context.output());
         }
         if inverted {
             1
@@ -277,7 +293,7 @@ pub async fn execute(args: WhyArgs, inverted: bool) -> Result<i32> {
             }
         }
 
-        riff_core::errln!(
+        riff_core::errln!(context.output(),
             "Not finding what you were looking for? Try calling `riff {} \"{}:{}\" --dry-run` to get another view on the problem.",
             command, needle, constraint_str
         );
@@ -331,7 +347,7 @@ fn display_version(package: &Package) -> &str {
     }
 }
 
-fn print_table(results: &[DependencyResult]) {
+fn print_table(results: &[DependencyResult], output: &riff_core::Output) {
     let mut seen = HashSet::new();
     let mut all_results = Vec::new();
     let mut queue: Vec<&DependencyResult> = results.iter().collect();
@@ -376,6 +392,7 @@ fn print_table(results: &[DependencyResult]) {
 
     for result in all_results {
         riff_core::outln!(
+            output,
             "{:<name_width$} {:<version_width$} {} {} ({})",
             result.package.name,
             display_version(&result.package),
@@ -386,12 +403,16 @@ fn print_table(results: &[DependencyResult]) {
     }
 }
 
-fn print_tree(results: &[DependencyResult], root: &Arc<riff_core::Package>) {
-    riff_core::outln!("{} {}", root.name, display_version(root));
-    print_tree_recursive(results, "");
+fn print_tree(
+    results: &[DependencyResult],
+    root: &Arc<riff_core::Package>,
+    output: &riff_core::Output,
+) {
+    riff_core::outln!(output, "{} {}", root.name, display_version(root));
+    print_tree_recursive(results, "", output);
 }
 
-fn print_tree_recursive(results: &[DependencyResult], prefix: &str) {
+fn print_tree_recursive(results: &[DependencyResult], prefix: &str, output: &riff_core::Output) {
     let count = results.len();
 
     for (idx, result) in results.iter().enumerate() {
@@ -419,6 +440,7 @@ fn print_tree_recursive(results: &[DependencyResult], prefix: &str) {
         let link_desc = result.link.link_type.description();
 
         riff_core::outln!(
+            output,
             "{}{}{} ({} {} {}){}",
             prefix,
             branch,
@@ -431,7 +453,7 @@ fn print_tree_recursive(results: &[DependencyResult], prefix: &str) {
 
         if let Some(ref children) = result.children {
             let new_prefix = format!("{}{}", prefix, if is_last { "   " } else { "|  " });
-            print_tree_recursive(children, &new_prefix);
+            print_tree_recursive(children, &new_prefix, output);
         }
     }
 }

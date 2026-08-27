@@ -95,7 +95,7 @@ struct ResolvedInit {
     autoload: Option<String>,
 }
 
-pub fn execute(args: InitArgs) -> Result<i32> {
+pub fn execute(args: InitArgs, context: &crate::CommandContext) -> Result<i32> {
     let working_dir = args
         .working_dir
         .canonicalize()
@@ -108,10 +108,9 @@ pub fn execute(args: InitArgs) -> Result<i32> {
     } else {
         let stdin = io::stdin();
         let mut input = stdin.lock();
-        let stderr = io::stderr();
-        let mut output = stderr.lock();
+        let mut output = RiffOutputWriter(context.output());
         let Some(resolved) = resolve_interactive(&args, &defaults, &mut input, &mut output)? else {
-            riff_core::errln!("Command aborted");
+            riff_core::errln!(context.output(), "Command aborted");
             return Ok(1);
         };
         resolved
@@ -128,9 +127,26 @@ pub fn execute(args: InitArgs) -> Result<i32> {
     }
 
     if args.no_interaction {
-        riff_core::errln!("Writing {}", path.display());
+        riff_core::errln!(context.output(), "Writing {}", path.display());
     }
     Ok(0)
+}
+
+struct RiffOutputWriter<'a>(&'a riff_core::Output);
+
+impl Write for RiffOutputWriter<'_> {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.0.write(
+            riff_core::OutputLevel::Info,
+            riff_core::OutputStream::Stderr,
+            format_args!("{}", String::from_utf8_lossy(buffer)),
+        );
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 #[derive(Debug)]

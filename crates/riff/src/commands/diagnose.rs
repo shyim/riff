@@ -81,7 +81,7 @@ impl DiagnosticReport {
         i32::from(self.checks.iter().any(DiagnosticCheck::is_problem))
     }
 
-    fn render(&self) {
+    fn render(&self, context: &crate::CommandContext) {
         for check in &self.checks {
             match &check.status {
                 CheckStatus::Ok(detail) => {
@@ -89,29 +89,33 @@ impl DiagnosticReport {
                         .as_deref()
                         .map(|detail| format!(" ({detail})"))
                         .unwrap_or_default();
-                    riff_core::outln!("Checking {}: OK{}", check.label, suffix);
+                    riff_core::outln!(context.output(), "Checking {}: OK{}", check.label, suffix);
                 }
                 CheckStatus::Warning(messages) => {
-                    riff_core::outln!("Checking {}: WARNING", check.label);
+                    riff_core::outln!(context.output(), "Checking {}: WARNING", check.label);
                     for message in messages {
-                        riff_core::warnln!("{message}");
+                        riff_core::warnln!(context.output(), "{message}");
                     }
                 }
                 CheckStatus::Error(messages) => {
-                    riff_core::outln!("Checking {}: FAIL", check.label);
+                    riff_core::outln!(context.output(), "Checking {}: FAIL", check.label);
                     for message in messages {
-                        riff_core::errln!("{message}");
+                        riff_core::errln!(context.output(), "{message}");
                     }
                 }
                 CheckStatus::Skipped(reason) => {
-                    riff_core::outln!("Checking {}: SKIP ({reason})", check.label);
+                    riff_core::outln!(
+                        context.output(),
+                        "Checking {}: SKIP ({reason})",
+                        check.label
+                    );
                 }
             }
         }
     }
 }
 
-pub async fn execute(args: DiagnoseArgs) -> Result<i32> {
+pub async fn execute(args: DiagnoseArgs, context: &crate::CommandContext) -> Result<i32> {
     let working_dir = args
         .working_dir
         .canonicalize()
@@ -120,7 +124,7 @@ pub async fn execute(args: DiagnoseArgs) -> Result<i32> {
         checks: project_checks(&working_dir),
     };
     report.checks.extend(network_checks(args.no_network).await);
-    report.render();
+    report.render(context);
     Ok(report.exit_code())
 }
 

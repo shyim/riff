@@ -313,7 +313,8 @@ fn apply(riff: &crate::riff::Riff, mut plan: FlexPlan) -> Result<()> {
         riff.vendor_dir(),
         plan.installed_packages,
         plan.force,
-    );
+    )
+    .with_output(riff.output().clone());
     configurator.apply(&plan.recipes, &mut plan.lock)?;
     plan.lock.write()?;
     synchronizer::synchronize(riff)?;
@@ -412,7 +413,8 @@ pub async fn install_recipes(
         riff.vendor_dir(),
         packages.iter().map(|package| package.name.clone()),
         force,
-    );
+    )
+    .with_output(riff.output().clone());
     configurator.apply(&recipes, &mut lock)?;
     lock.write()?;
     synchronizer::synchronize(riff)?;

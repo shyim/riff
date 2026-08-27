@@ -166,8 +166,9 @@ pub async fn execute(args: CheckPlatformReqsArgs, context: &CommandContext) -> R
         .with_context(|| format!("Failed to parse {}", composer_path.display()))?;
 
     let (packages, source_description) =
-        load_packages(&working_dir, args.lock, args.no_dev).await?;
+        load_packages(&working_dir, args.lock, args.no_dev, context).await?;
     riff_core::errln!(
+        context.output(),
         "Checking {}platform requirements {}",
         if args.no_dev { "non-dev " } else { "" },
         source_description
@@ -180,9 +181,13 @@ pub async fn execute(args: CheckPlatformReqsArgs, context: &CommandContext) -> R
     let (results, exit_code) = evaluate(requirements, candidates)?;
 
     if args.format == "json" {
-        riff_core::outln!("{}", serde_json::to_string_pretty(&results)?);
+        riff_core::outln!(
+            context.output(),
+            "{}",
+            serde_json::to_string_pretty(&results)?
+        );
     } else {
-        print_text(&results);
+        print_text(&results, context);
     }
 
     Ok(exit_code)
@@ -192,6 +197,7 @@ async fn load_packages(
     working_dir: &Path,
     lock_only: bool,
     no_dev: bool,
+    context: &CommandContext,
 ) -> Result<(Vec<PackageMetadata>, &'static str)> {
     let lock_path = working_dir.join("composer.lock");
 
@@ -216,7 +222,10 @@ async fn load_packages(
             return Ok((packages, "for packages in the vendor dir"));
         }
 
-        riff_core::errln!("No vendor dir present, falling back to composer.lock");
+        riff_core::errln!(
+            context.output(),
+            "No vendor dir present, falling back to composer.lock"
+        );
     }
 
     let lock = read_lock(&lock_path)?;
@@ -458,7 +467,7 @@ fn evaluate(
     Ok((results, exit_code))
 }
 
-fn print_text(results: &[PlatformResult]) {
+fn print_text(results: &[PlatformResult], context: &CommandContext) {
     let name_width = results
         .iter()
         .map(|result| result.name.len())
@@ -490,6 +499,7 @@ fn print_text(results: &[PlatformResult]) {
             .map(|provider| format!(" {provider}"))
             .unwrap_or_default();
         riff_core::outln!(
+            context.output(),
             "{:<name_width$} {:<version_width$} {:<48} {}{}",
             result.name,
             result.version,

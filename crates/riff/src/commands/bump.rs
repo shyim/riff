@@ -29,7 +29,7 @@ pub struct BumpArgs {
     pub working_dir: PathBuf,
 }
 
-pub fn execute(args: BumpArgs) -> Result<i32> {
+pub fn execute(args: BumpArgs, context: &crate::CommandContext) -> Result<i32> {
     if args.dev_only && args.no_dev_only {
         bail!("--dev-only and --no-dev-only cannot be combined");
     }
@@ -39,11 +39,11 @@ pub fn execute(args: BumpArgs) -> Result<i32> {
         .context("Failed to resolve working directory")?;
     let manifest_path = working_dir.join("composer.json");
     if !manifest_path.is_file() || fs::File::open(&manifest_path).is_err() {
-        riff_core::errln!("./composer.json is not readable.");
+        riff_core::errln!(context.output(), "./composer.json is not readable.");
         return Ok(1);
     }
     if !is_writable(&manifest_path) {
-        riff_core::errln!("./composer.json is not writable.");
+        riff_core::errln!(context.output(), "./composer.json is not writable.");
         return Ok(1);
     }
 
@@ -73,7 +73,14 @@ pub fn execute(args: BumpArgs) -> Result<i32> {
     } else {
         "all"
     };
-    crate::update::bump_after_update(&working_dir, mode, &versions, &HashMap::new(), args.dry_run)
+    crate::update::bump_after_update(
+        &working_dir,
+        mode,
+        &versions,
+        &HashMap::new(),
+        args.dry_run,
+        context.output(),
+    )
 }
 
 fn installed_versions(working_dir: &Path) -> Result<HashMap<String, String>> {

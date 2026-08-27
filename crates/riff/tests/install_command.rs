@@ -195,6 +195,48 @@ fn composer_install_prefetches_and_reports_audit_with_a_custom_vendor_directory(
         .contains("No security vulnerability advisories found."));
 }
 
+#[test]
+fn quiet_install_suppresses_suggestion_and_funding_notices() {
+    let project = tempfile::tempdir().unwrap();
+    let manifest = json!({
+        "repositories": [{"packagist.org": false}],
+        "require": {"vendor/package": "1.0.0"}
+    });
+    let manifest_content = format!("{}\n", serde_json::to_string_pretty(&manifest).unwrap());
+    std::fs::write(project.path().join("composer.json"), &manifest_content).unwrap();
+    write_json(
+        &project.path().join("composer.lock"),
+        &json!({
+            "content-hash": riff_core::compute_content_hash(&manifest_content),
+            "packages": [{
+                "name": "vendor/package",
+                "version": "1.0.0",
+                "version_normalized": "1.0.0.0",
+                "type": "metapackage",
+                "suggest": {"vendor/optional": "Optional integration"},
+                "funding": [{"type": "custom", "url": "https://example.com/fund"}]
+            }],
+            "packages-dev": []
+        }),
+    );
+
+    composer(project.path())
+        .args([
+            "--quiet",
+            "install",
+            "--no-autoloader",
+            "--no-audit",
+            "--no-scripts",
+            "--no-plugins",
+            "-d",
+        ])
+        .arg(project.path())
+        .assert()
+        .success()
+        .stdout("")
+        .stderr("");
+}
+
 // Ported from Composer\Test\Command\InstallCommandTest::testInstallNewPackagesWithExistingPartialVendor.
 #[test]
 fn composer_install_reconciles_a_partial_vendor_directory() {

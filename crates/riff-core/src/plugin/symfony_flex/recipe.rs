@@ -108,6 +108,7 @@ pub(crate) struct RecipeDownloader {
     aliases: IndexMap<String, String>,
     versions: Map<String, Value>,
     legacy_endpoint: Option<String>,
+    output: crate::output::Output,
 }
 
 impl RecipeDownloader {
@@ -121,6 +122,7 @@ impl RecipeDownloader {
                 cache_dir.clone(),
                 riff.config.cache_read_only,
                 url.clone(),
+                riff.output().clone(),
             )
         }))
         .await;
@@ -169,12 +171,14 @@ impl RecipeDownloader {
                     cache_dir.clone(),
                     riff.config.cache_read_only,
                     version_url,
+                    riff.output().clone(),
                 ),
                 fetch_cached(
                     riff.http_client.clone(),
                     cache_dir.clone(),
                     riff.config.cache_read_only,
                     alias_url,
+                    riff.output().clone(),
                 ),
             )
             .await?;
@@ -199,6 +203,7 @@ impl RecipeDownloader {
             aliases,
             versions,
             legacy_endpoint: configuration.legacy,
+            output: riff.output().clone(),
         })
     }
 
@@ -322,6 +327,7 @@ impl RecipeDownloader {
                         self.cache_dir.clone(),
                         self.cache_read_only,
                         url,
+                        self.output.clone(),
                     )
                     .await
                     {
@@ -332,6 +338,7 @@ impl RecipeDownloader {
                             }
                         }
                         Err(error) => crate::warnln!(
+                            self.output,
                             "Warning: Failed to download recipe for {}: {error:#}",
                             package.name
                         ),
@@ -366,6 +373,7 @@ impl RecipeDownloader {
             let client = self.client.clone();
             let cache_dir = self.cache_dir.clone();
             let cache_read_only = self.cache_read_only;
+            let output = self.output.clone();
             let installed_versions = installed_versions.clone();
             requests.push(async move {
                 for (recipe_version, url) in urls {
@@ -374,12 +382,14 @@ impl RecipeDownloader {
                         cache_dir.clone(),
                         cache_read_only,
                         url,
+                        output.clone(),
                     )
                     .await
                     {
                         Ok(body) => body,
                         Err(error) => {
                             crate::warnln!(
+                                output,
                                 "Warning: Failed to download recipe for {}: {error:#}",
                                 package.name
                             );
@@ -396,6 +406,7 @@ impl RecipeDownloader {
                     return Ok(Some(recipe));
                 }
                 crate::warnln!(
+                    output,
                     "Warning: Skipping recipe for {} because every compatible recipe conflicts with installed packages",
                     package.name
                 );
@@ -452,6 +463,7 @@ impl RecipeDownloader {
             self.cache_dir.clone(),
             self.cache_read_only,
             original_url,
+            self.output.clone(),
         )
         .await
         .context("Failed to download the installed recipe version")?;
@@ -488,6 +500,7 @@ impl RecipeDownloader {
                 self.cache_dir.clone(),
                 self.cache_read_only,
                 url,
+                self.output.clone(),
             )
             .await
             .context("Failed to download the latest recipe version")?;
@@ -585,6 +598,7 @@ async fn fetch_cached(
     cache_dir: PathBuf,
     cache_read_only: bool,
     url: String,
+    output: crate::output::Output,
 ) -> Result<String> {
     let cache_file = cache_dir.join(cache_key(&url));
     let cached = std::fs::read(&cache_file)
@@ -639,6 +653,7 @@ async fn fetch_cached(
         Err(error) => {
             if let Some(cached) = cached {
                 crate::warnln!(
+                    output,
                     "Warning: {url} could not be loaded ({error}); using cached Symfony recipe data that may be out of date"
                 );
                 Ok(cached.body)

@@ -102,6 +102,7 @@ pub async fn execute(args: DumpAutoloadArgs, context: &CommandContext) -> Result
         .with_lockfile(lock)
         .with_platform(context.platform().clone())
         .with_runtime(context.runtime().clone())
+        .with_output(context.output().clone())
         .plugins_enabled(!args.no_plugins)
         .dry_run(args.dry_run)
         .no_dev(args.no_dev)

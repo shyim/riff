@@ -12,6 +12,7 @@ use super::vcs::{VcsRepository, VcsType};
 use super::ComposerRepository;
 use super::PlatformRepository;
 use crate::cache::runtime_cache_dir;
+use crate::output::Output;
 use crate::package::Package;
 use riff_semver::VersionParser;
 
@@ -19,6 +20,7 @@ use riff_semver::VersionParser;
 pub struct RepositoryManager {
     /// Repositories in priority order (first = highest priority)
     repositories: Vec<Arc<dyn Repository>>,
+    output: Output,
 }
 
 /// Packages returned for solving together with repository-priority context.
@@ -61,7 +63,13 @@ impl RepositoryManager {
     pub fn new() -> Self {
         Self {
             repositories: Vec::new(),
+            output: Output::silent(),
         }
+    }
+
+    pub fn with_output(mut self, output: Output) -> Self {
+        self.output = output;
+        self
     }
 
     /// Add a repository (will be added with lowest priority)
@@ -320,15 +328,15 @@ impl RepositoryManager {
                     let options = extract_path_options(&config);
                     Arc::new(PathRepository::new(&config.url, options))
                 }
-                RepositoryType::Vcs => Arc::new(VcsRepository::new(&config.url, VcsType::Vcs)),
-                RepositoryType::Git => Arc::new(VcsRepository::new(&config.url, VcsType::Git)),
-                RepositoryType::Hg => Arc::new(VcsRepository::new(&config.url, VcsType::Hg)),
-                RepositoryType::Svn => Arc::new(VcsRepository::new(&config.url, VcsType::Svn)),
+                RepositoryType::Vcs => Arc::new(manager.vcs_repository(&config.url, VcsType::Vcs)),
+                RepositoryType::Git => Arc::new(manager.vcs_repository(&config.url, VcsType::Git)),
+                RepositoryType::Hg => Arc::new(manager.vcs_repository(&config.url, VcsType::Hg)),
+                RepositoryType::Svn => Arc::new(manager.vcs_repository(&config.url, VcsType::Svn)),
                 RepositoryType::Fossil => {
-                    Arc::new(VcsRepository::new(&config.url, VcsType::Fossil))
+                    Arc::new(manager.vcs_repository(&config.url, VcsType::Fossil))
                 }
                 RepositoryType::Perforce => {
-                    Arc::new(VcsRepository::new(&config.url, VcsType::Perforce))
+                    Arc::new(manager.vcs_repository(&config.url, VcsType::Perforce))
                 }
                 RepositoryType::Pear => {
                     return Err(
@@ -336,13 +344,13 @@ impl RepositoryManager {
                     );
                 }
                 RepositoryType::GitHub => {
-                    Arc::new(VcsRepository::new(&config.url, VcsType::GitHub))
+                    Arc::new(manager.vcs_repository(&config.url, VcsType::GitHub))
                 }
                 RepositoryType::GitLab => {
-                    Arc::new(VcsRepository::new(&config.url, VcsType::GitLab))
+                    Arc::new(manager.vcs_repository(&config.url, VcsType::GitLab))
                 }
                 RepositoryType::Bitbucket => {
-                    Arc::new(VcsRepository::new(&config.url, VcsType::Bitbucket))
+                    Arc::new(manager.vcs_repository(&config.url, VcsType::Bitbucket))
                 }
                 RepositoryType::Artifact => {
                     // Artifact repository - scans directory for archive files
@@ -355,6 +363,7 @@ impl RepositoryManager {
                             Ok(repo) => Arc::new(repo),
                             Err(e) => {
                                 crate::errln!(
+                                    manager.output,
                                     "Warning: Failed to create package repository: {}",
                                     e
                                 );
@@ -362,7 +371,10 @@ impl RepositoryManager {
                             }
                         }
                     } else {
-                        crate::warnln!("Warning: Package repository missing 'package' field");
+                        crate::warnln!(
+                            manager.output,
+                            "Warning: Package repository missing 'package' field"
+                        );
                         continue;
                     }
                 }
@@ -465,26 +477,33 @@ impl RepositoryManager {
             JsonRepo::Package { package, .. } => match PackageRepository::new(package) {
                 Ok(repo) => Some(Arc::new(repo)),
                 Err(e) => {
-                    crate::warnln!("Warning: Failed to create package repository: {}", e);
+                    crate::warnln!(
+                        self.output,
+                        "Warning: Failed to create package repository: {}",
+                        e
+                    );
                     None
                 }
             },
-            JsonRepo::Vcs { url } => Some(Arc::new(VcsRepository::new(url, VcsType::Vcs))),
-            JsonRepo::Git { url } => Some(Arc::new(VcsRepository::new(url, VcsType::Git))),
-            JsonRepo::Hg { url } => Some(Arc::new(VcsRepository::new(url, VcsType::Hg))),
-            JsonRepo::Svn { url } => Some(Arc::new(VcsRepository::new(url, VcsType::Svn))),
-            JsonRepo::Fossil { url } => Some(Arc::new(VcsRepository::new(url, VcsType::Fossil))),
+            JsonRepo::Vcs { url } => Some(Arc::new(self.vcs_repository(url, VcsType::Vcs))),
+            JsonRepo::Git { url } => Some(Arc::new(self.vcs_repository(url, VcsType::Git))),
+            JsonRepo::Hg { url } => Some(Arc::new(self.vcs_repository(url, VcsType::Hg))),
+            JsonRepo::Svn { url } => Some(Arc::new(self.vcs_repository(url, VcsType::Svn))),
+            JsonRepo::Fossil { url } => Some(Arc::new(self.vcs_repository(url, VcsType::Fossil))),
             JsonRepo::Perforce { url } => {
-                Some(Arc::new(VcsRepository::new(url, VcsType::Perforce)))
+                Some(Arc::new(self.vcs_repository(url, VcsType::Perforce)))
             }
             JsonRepo::Pear { .. } => {
-                crate::warnln!("Warning: The PEAR repository has been removed from Composer 2.x");
+                crate::warnln!(
+                    self.output,
+                    "Warning: The PEAR repository has been removed from Composer 2.x"
+                );
                 None
             }
-            JsonRepo::GitHub { url } => Some(Arc::new(VcsRepository::new(url, VcsType::GitHub))),
-            JsonRepo::GitLab { url } => Some(Arc::new(VcsRepository::new(url, VcsType::GitLab))),
+            JsonRepo::GitHub { url } => Some(Arc::new(self.vcs_repository(url, VcsType::GitHub))),
+            JsonRepo::GitLab { url } => Some(Arc::new(self.vcs_repository(url, VcsType::GitLab))),
             JsonRepo::Bitbucket { url } => {
-                Some(Arc::new(VcsRepository::new(url, VcsType::Bitbucket)))
+                Some(Arc::new(self.vcs_repository(url, VcsType::Bitbucket)))
             }
             JsonRepo::Artifact { url } => {
                 Some(Arc::new(ArtifactRepository::new_with_base(url, base_dir)))
@@ -498,6 +517,10 @@ impl RepositoryManager {
         if let Some(repo) = result {
             self.add_repository(repo);
         }
+    }
+
+    fn vcs_repository(&self, url: impl Into<String>, vcs_type: VcsType) -> VcsRepository {
+        VcsRepository::new(url, vcs_type).with_output(self.output.clone())
     }
 
     /// Add multiple repositories from composer.json

@@ -1,7 +1,7 @@
 //! Add command - add and install a package.
 
 use anyhow::{bail, Context, Result};
-use console::style;
+use riff_core::output::style;
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -124,6 +124,7 @@ pub async fn execute(args: AddArgs, context: &CommandContext) -> Result<i32> {
         serde_json::from_str(content)?
     } else {
         riff_core::outln!(
+            context.output(),
             "{} No composer.json found. Creating one.",
             style("Info:").cyan()
         );
@@ -153,6 +154,7 @@ pub async fn execute(args: AddArgs, context: &CommandContext) -> Result<i32> {
         .with_lockfile(lock)
         .with_platform(context.platform().clone())
         .with_runtime(context.runtime().clone())
+        .with_output(context.output().clone())
         .with_policy_environment(PolicyEnvironment::from_process())
         .plugins_enabled(!args.no_plugins)
         .dry_run(args.dry_run);
@@ -174,9 +176,17 @@ pub async fn execute(args: AddArgs, context: &CommandContext) -> Result<i32> {
         )
         .await?;
 
-    riff_core::outln!("{} Adding packages", style("Riff").green().bold());
+    riff_core::outln!(
+        context.output(),
+        "{} Adding packages",
+        style("Riff").green().bold()
+    );
     if args.dry_run {
-        riff_core::outln!("{} Running in dry-run mode", style("Info:").cyan());
+        riff_core::outln!(
+            context.output(),
+            "{} Running in dry-run mode",
+            style("Info:").cyan()
+        );
     }
 
     let requested_packages = VersionParser::new().parse_name_version_pairs(&package_arguments);
@@ -188,9 +198,16 @@ pub async fn execute(args: AddArgs, context: &CommandContext) -> Result<i32> {
         if let Some(warning) =
             move_inconsistent_requirement(&mut riff.manifest, &resolved.name, args.dev)
         {
-            riff_core::errln!("Warning: {warning}");
-            if !args.no_interaction && !confirm("Do you want to move this requirement", true)? {
+            riff_core::errln!(context.output(), "Warning: {warning}");
+            if !args.no_interaction
+                && !confirm(
+                    "Do you want to move this requirement",
+                    true,
+                    context.output(),
+                )?
+            {
                 riff_core::errln!(
+                    context.output(),
                     "Installation failed, reverting composer.json to its original content."
                 );
                 return Ok(1);
@@ -199,6 +216,7 @@ pub async fn execute(args: AddArgs, context: &CommandContext) -> Result<i32> {
 
         if resolved.selected_version.is_some() {
             riff_core::outln!(
+                context.output(),
                 "Using version {} for {}",
                 resolved.constraint,
                 resolved.name
@@ -206,7 +224,7 @@ pub async fn execute(args: AddArgs, context: &CommandContext) -> Result<i32> {
         }
 
         if resolved.feature_branch {
-            riff_core::errln!(
+            riff_core::errln!(context.output(),
                 "Warning: Version {} looks like it may be a feature branch which is unlikely to keep working in the long run and may be in an unstable state",
                 resolved.selected_version.as_deref().unwrap_or(&resolved.constraint)
             );
@@ -214,14 +232,16 @@ pub async fn execute(args: AddArgs, context: &CommandContext) -> Result<i32> {
                 && !confirm(
                     "Are you sure you want to use this constraint or would you rather abort the whole operation",
                     true,
+                    context.output(),
                 )?
             {
-                riff_core::errln!("Installation failed, reverting composer.json to its original content.");
+                riff_core::errln!(context.output(), "Installation failed, reverting composer.json to its original content.");
                 return Ok(1);
             }
         }
 
         riff_core::outln!(
+            context.output(),
             "  {} {} {}",
             style("+").green(),
             style(&resolved.name).white().bold(),
@@ -244,7 +264,7 @@ pub async fn execute(args: AddArgs, context: &CommandContext) -> Result<i32> {
         .transform_root_manifest(&mut riff, riff_core::plugin::PackageOperation::Require)
         .await?
     {
-        riff_core::outln!("  - {message}");
+        riff_core::outln!(context.output(), "  - {message}");
     }
 
     // Write updated composer.json
@@ -252,7 +272,11 @@ pub async fn execute(args: AddArgs, context: &CommandContext) -> Result<i32> {
         riff_core::json::write_json_value(&json_path, &riff.manifest, true)
             .context("Failed to write composer.json")?;
     } else {
-        riff_core::outln!("{} composer.json would be updated", style("Info:").cyan());
+        riff_core::outln!(
+            context.output(),
+            "{} composer.json would be updated",
+            style("Info:").cyan()
+        );
     }
 
     // Run update
@@ -285,12 +309,14 @@ pub async fn execute(args: AddArgs, context: &CommandContext) -> Result<i32> {
         result
     } else if args.dry_run {
         riff_core::outln!(
+            context.output(),
             "{} Update skipped; no files were changed",
             style("Info:").cyan()
         );
         Ok(0)
     } else {
         riff_core::successln!(
+            context.output(),
             "{} Packages added to composer.json",
             style("Success:").green().bold()
         );
@@ -331,7 +357,7 @@ async fn resolve_package_pair(
         .cloned()
         .collect::<Vec<_>>();
     let selectable = compatible_with_root.as_slice();
-    emit_platform_selection_warnings(selectable, &riff.platform_packages, verbose);
+    emit_platform_selection_warnings(selectable, &riff.platform_packages, verbose, riff.output());
     let package = select_recommended_package(selectable, &riff.platform_packages)
         .ok_or_else(|| incompatible_platform_error(&name, selectable, &riff.platform_packages))?;
     let php_version = riff
@@ -487,6 +513,7 @@ fn emit_platform_selection_warnings(
     packages: &[Arc<Package>],
     platform_packages: &[Package],
     verbose: u8,
+    output: &riff_core::Output,
 ) {
     let ordered = packages_by_descending_version(packages);
     let mut warned = 0;
@@ -505,6 +532,7 @@ fn emit_platform_selection_warnings(
             format!("{} {}", package.name, package.pretty_version())
         };
         riff_core::errln!(
+            output,
             "Warning: Cannot use {version_label} as it {}.",
             issue.warning_description()
         );
@@ -634,9 +662,13 @@ fn looks_like_feature_branch(version: &str) -> bool {
         )
 }
 
-fn confirm(question: &str, default: bool) -> Result<bool> {
+fn confirm(question: &str, default: bool, output: &riff_core::Output) -> Result<bool> {
     let default_label = if default { "y" } else { "n" };
-    riff_core::errln!("{question} [{default_label}/n]? ");
+    output.write(
+        riff_core::OutputLevel::Info,
+        riff_core::OutputStream::Stderr,
+        format_args!("{question} [{default_label}/n]? "),
+    );
     let mut answer = String::new();
     io::stdin().read_line(&mut answer)?;
     let answer = answer.trim().to_ascii_lowercase();

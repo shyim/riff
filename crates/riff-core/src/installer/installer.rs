@@ -1,6 +1,6 @@
+use crate::output::style;
 use anyhow::{Context, Result};
 use compact_str::CompactString;
-use console::style;
 use foldhash::{HashMap as FastHashMap, HashMapExt, HashSet as FastHashSet};
 use indicatif::{ProgressBar, ProgressStyle};
 use regex::Regex;
@@ -331,7 +331,7 @@ impl Installer {
 
         let mut locked_package_identities = HashSet::new();
         if options.update_mirrors && self.riff.lockfile.is_none() {
-            crate::errln!(
+            crate::errln!(self.riff.output(),
                 "Cannot update lock file information without a lock file present. Run `riff update` to generate a lock file."
             );
             return Ok(UpdateResult::exit(3));
@@ -342,7 +342,7 @@ impl Installer {
             .is_some_and(|packages| !packages.is_empty())
             && self.riff.lockfile.is_none()
         {
-            crate::errln!(
+            crate::errln!(self.riff.output(),
                 "Cannot update only a partial set of packages without a lock file present. Run `riff update` to generate a lock file."
             );
             return Ok(UpdateResult::exit(3));
@@ -363,11 +363,16 @@ impl Installer {
                 }
                 if package.contains('*') {
                     crate::warnln!(
+                        self.riff.output(),
                         "Pattern \"{}\" listed for update does not match any locked packages.",
                         package
                     );
                 } else {
-                    crate::warnln!("Package \"{}\" listed for update is not locked.", package);
+                    crate::warnln!(
+                        self.riff.output(),
+                        "Package \"{}\" listed for update is not locked.",
+                        package
+                    );
                 }
             }
         }
@@ -380,10 +385,12 @@ impl Installer {
                 .any(|required| required.eq_ignore_ascii_case(root_name));
             if requires_self {
                 crate::errln!(
+                    self.riff.output(),
                     "Root package '{}' cannot require itself in its composer.json",
                     root_name
                 );
                 crate::errln!(
+                    self.riff.output(),
                     "Did you accidentally name your root package after an external package?"
                 );
                 return Ok(UpdateResult::exit(1));
@@ -392,10 +399,18 @@ impl Installer {
 
         log::debug!("Reading {}/composer.json", working_dir.display());
 
-        crate::outln!("{} Updating dependencies", style("Riff").green().bold());
+        crate::outln!(
+            self.riff.output(),
+            "{} Updating dependencies",
+            style("Riff").green().bold()
+        );
 
         if dry_run {
-            crate::outln!("{} Running in dry-run mode", style("Info:").cyan());
+            crate::outln!(
+                self.riff.output(),
+                "{} Running in dry-run mode",
+                style("Info:").cyan()
+            );
         }
 
         // Dispatch pre-update event
@@ -407,7 +422,7 @@ impl Installer {
         }
 
         // Create progress spinner
-        let spinner = if crate::output::progress_enabled() {
+        let spinner = if self.riff.output().progress_enabled() {
             let spinner = ProgressBar::new_spinner();
             spinner.set_style(
                 ProgressStyle::default_spinner()
@@ -930,7 +945,7 @@ impl Installer {
                         let via_replace = replaced
                             .map(|name| format!(" (via replace of {name})"))
                             .unwrap_or_default();
-                        crate::warnln!(
+                        crate::warnln!(self.riff.output(),
                                 "Dependency {package}{via_replace} is also a root requirement. Package has not been listed as an update argument, so keeping locked at old version. Use --with-all-dependencies (-W) to include root dependencies."
                             );
                     }
@@ -1040,7 +1055,7 @@ impl Installer {
         )
         .await?;
         for warning in package_policy.unreachable_repositories() {
-            crate::warnln!("Warning: {warning}");
+            crate::warnln!(self.riff.output(), "Warning: {warning}");
         }
         let mut policy_diagnostics = PolicyDiagnostics::default();
         for package_id in policy_package_ids {
@@ -1089,19 +1104,24 @@ impl Installer {
             Err(problems) => {
                 spinner.finish_and_clear();
                 crate::errln!(
+                    self.riff.output(),
                     "{} Could not resolve dependencies",
                     style("Error:").red().bold()
                 );
                 if let Some(root_name) = manifest.name.as_deref() {
-                    crate::errln!(
+                    crate::errln!(self.riff.output(),
                         "  {root_name} is the root package and cannot be modified during dependency resolution."
                     );
                 }
                 for diagnostic in policy_diagnostics.lines() {
-                    crate::errln!("{} {diagnostic}", style("Error:").red().bold());
+                    crate::errln!(
+                        self.riff.output(),
+                        "{} {diagnostic}",
+                        style("Error:").red().bold()
+                    );
                 }
                 if policy_diagnostics.has_advisories() {
-                    crate::errln!(
+                    crate::errln!(self.riff.output(),
                         "  Run `riff audit` for full advisory details, or use --no-blocking to disable policy blocking."
                     );
                 }
@@ -1109,15 +1129,15 @@ impl Installer {
                     options.temporary_constraints.iter().collect::<Vec<_>>();
                 temporary_constraints.sort_by(|left, right| left.0.cmp(right.0));
                 for (package, constraint) in temporary_constraints {
-                    crate::errln!(
+                    crate::errln!(self.riff.output(),
                         "  Temporary update constraint {package}:{constraint} excluded all compatible candidates."
                     );
                 }
                 for problem in problems.problems() {
-                    crate::errln!("  {}", problem.describe(&pool));
+                    crate::errln!(self.riff.output(), "  {}", problem.describe(&pool));
                 }
                 for name in &canonical_priority_blocks {
-                    crate::errln!(
+                    crate::errln!(self.riff.output(),
                         "  Package {name} is shadowed by a canonical package from a higher repository priority."
                     );
                 }
@@ -1376,12 +1396,24 @@ impl Installer {
             spinner.finish_and_clear();
             if lock_file_changed {
                 if dry_run {
-                    crate::outln!("{} Lock file would be updated", style("Info:").cyan());
+                    crate::outln!(
+                        self.riff.output(),
+                        "{} Lock file would be updated",
+                        style("Info:").cyan()
+                    );
                 } else {
-                    crate::successln!("{} Lock file updated", style("Success:").green().bold());
+                    crate::successln!(
+                        self.riff.output(),
+                        "{} Lock file updated",
+                        style("Success:").green().bold()
+                    );
                 }
             } else {
-                crate::outln!("{} Lock file is up to date", style("Info:").cyan());
+                crate::outln!(
+                    self.riff.output(),
+                    "{} Lock file is up to date",
+                    style("Info:").cyan()
+                );
             }
             return Ok(UpdateResult::success(
                 updated_package_names,
@@ -1393,6 +1425,7 @@ impl Installer {
         if options.no_install {
             spinner.finish_and_clear();
             crate::outln!(
+                self.riff.output(),
                 "{} Installation skipped; lock file update complete",
                 style("Info:").cyan()
             );
@@ -1575,6 +1608,7 @@ impl Installer {
         for pkg in &actually_installed {
             log::debug!("Installed {} ({})", pkg.name, pkg.version);
             crate::outln!(
+                self.riff.output(),
                 "  {} {} ({})",
                 style("-").green(),
                 style(&pkg.name).white().bold(),
@@ -1584,6 +1618,7 @@ impl Installer {
         for pkg in &result.reinstalled {
             log::debug!("Reinstalled {} ({})", pkg.name, pkg.version);
             crate::outln!(
+                self.riff.output(),
                 "  {} {} ({}, reinstalled)",
                 style("-").green(),
                 style(&pkg.name).white().bold(),
@@ -1614,7 +1649,11 @@ impl Installer {
                 }
                 additional_classmap = event.classmap_paths();
             }
-            crate::outln!("{} Generating autoload files", style("Info:").cyan());
+            crate::outln!(
+                self.riff.output(),
+                "{} Generating autoload files",
+                style("Info:").cyan()
+            );
 
             let aliases_map: HashMap<String, Vec<String>> = HashMap::new();
             let dev_mode = !no_dev;
@@ -1705,18 +1744,24 @@ impl Installer {
             actually_installed.len() + result.updated.len() + result.reinstalled.len();
         if download_only {
             crate::successln!(
+                self.riff.output(),
                 "{} {} packages downloaded",
                 style("Success:").green().bold(),
                 total_changed
             );
         } else if total_changed > 0 || lock_file_changed {
             crate::successln!(
+                self.riff.output(),
                 "{} {} packages updated",
                 style("Success:").green().bold(),
                 total_changed
             );
         } else {
-            crate::outln!("{} Nothing to update.", style("Info:").cyan());
+            crate::outln!(
+                self.riff.output(),
+                "{} Nothing to update.",
+                style("Info:").cyan()
+            );
         }
 
         if !dry_run {
@@ -1759,7 +1804,7 @@ impl Installer {
         let current_content_hash =
             crate::util::compute_content_hash(&serde_json::to_string(manifest).unwrap_or_default());
         if !lock.content_hash.is_empty() && lock.content_hash != current_content_hash {
-            crate::warnln!(
+            crate::warnln!(self.riff.output(),
                 "Warning: The lock file is not up to date with the latest changes in composer.json. You may be getting outdated dependencies."
             );
         }
@@ -1789,7 +1834,7 @@ impl Installer {
         )
         .await?;
         for warning in package_policy.unreachable_repositories() {
-            crate::warnln!("Warning: {warning}");
+            crate::warnln!(self.riff.output(), "Warning: {warning}");
         }
         let mut policy_blocked = false;
         for package in &packages {
@@ -1797,6 +1842,7 @@ impl Installer {
             for violation in package_policy.violations(package, PolicyPhase::Install, false, false)
             {
                 crate::errln!(
+                    self.riff.output(),
                     "{} {}",
                     style("Error:").red().bold(),
                     violation.diagnostic(package)
@@ -1815,17 +1861,29 @@ impl Installer {
             no_dev,
         ) {
             for problem in problems {
-                crate::errln!("{} {problem}", style("Error:").red().bold());
+                crate::errln!(
+                    self.riff.output(),
+                    "{} {problem}",
+                    style("Error:").red().bold()
+                );
             }
             return Ok(2);
         }
         let relation_problems =
             validate_locked_package_relations(manifest, &root_version, &packages, no_dev);
         for problem in &relation_problems.root_requirements {
-            crate::errln!("{} {problem}", style("Error:").red().bold());
+            crate::errln!(
+                self.riff.output(),
+                "{} {problem}",
+                style("Error:").red().bold()
+            );
         }
         for problem in &relation_problems.solver {
-            crate::errln!("{} {problem}", style("Error:").red().bold());
+            crate::errln!(
+                self.riff.output(),
+                "{} {problem}",
+                style("Error:").red().bold()
+            );
         }
         if !relation_problems.solver.is_empty() {
             return Ok(2);
@@ -1838,14 +1896,19 @@ impl Installer {
         self.riff.plugins().validate(packages.iter())?;
 
         crate::outln!(
+            self.riff.output(),
             "{} Installing dependencies from lock file",
             style("Riff").green().bold()
         );
         if dry_run {
-            crate::outln!("{} Running in dry-run mode", style("Info:").cyan());
+            crate::outln!(
+                self.riff.output(),
+                "{} Running in dry-run mode",
+                style("Info:").cyan()
+            );
         }
 
-        let progress = if crate::output::progress_enabled() {
+        let progress = if self.riff.output().progress_enabled() {
             let progress = ProgressBar::new(packages.len() as u64);
             progress.set_style(
                 ProgressStyle::default_bar()
@@ -1924,6 +1987,7 @@ impl Installer {
         if !result.installed.is_empty() {
             for pkg in &result.installed {
                 crate::outln!(
+                    self.riff.output(),
                     "  {} {} ({})",
                     style("-").green(),
                     style(&pkg.name).white().bold(),
@@ -1933,6 +1997,7 @@ impl Installer {
         }
         for pkg in &result.reinstalled {
             crate::outln!(
+                self.riff.output(),
                 "  {} {} ({}, reinstalled)",
                 style("-").green(),
                 style(&pkg.name).white().bold(),
@@ -1959,7 +2024,11 @@ impl Installer {
                 additional_classmap = event.classmap_paths();
             }
 
-            crate::outln!("{} Generating autoload files", style("Info:").cyan());
+            crate::outln!(
+                self.riff.output(),
+                "{} Generating autoload files",
+                style("Info:").cyan()
+            );
 
             let mut aliases_map: HashMap<String, Vec<String>> = HashMap::new();
             for alias in &lock.aliases {
@@ -2054,12 +2123,14 @@ impl Installer {
 
         if download_only {
             crate::successln!(
+                self.riff.output(),
                 "{} {} packages downloaded",
                 style("Success:").green().bold(),
                 result.installed.len() + result.updated.len() + result.reinstalled.len()
             );
         } else {
             crate::successln!(
+                self.riff.output(),
                 "{} {} packages installed, {} reinstalled",
                 style("Success:").green().bold(),
                 result.installed.len(),
@@ -2105,8 +2176,16 @@ impl Installer {
         let root_version = get_root_version(working_dir, manifest);
 
         if dry_run {
-            crate::outln!("{} Running in dry-run mode", style("Info:").cyan());
-            crate::outln!("{} Would generate autoload files", style("Info:").cyan());
+            crate::outln!(
+                self.riff.output(),
+                "{} Running in dry-run mode",
+                style("Info:").cyan()
+            );
+            crate::outln!(
+                self.riff.output(),
+                "{} Would generate autoload files",
+                style("Info:").cyan()
+            );
             return Ok(());
         }
 
@@ -2122,7 +2201,11 @@ impl Installer {
 
         let optimized = optimize || authoritative;
         let description = autoload_files_description(optimized, authoritative);
-        crate::outln!("{} Generating {description}", style("Info:").cyan());
+        crate::outln!(
+            self.riff.output(),
+            "{} Generating {description}",
+            style("Info:").cyan()
+        );
 
         let mut aliases_map: HashMap<String, Vec<String>> = HashMap::new();
         let mut package_autoloads: Vec<PackageAutoload> = Vec::new();
@@ -2207,7 +2290,7 @@ impl Installer {
         ) {
             Ok(result) => result,
             Err(error) => {
-                crate::errln!("{error}");
+                crate::errln!(self.riff.output(), "{error}");
                 return Err(error).context("Failed to generate autoloader");
             }
         };
@@ -2225,12 +2308,14 @@ impl Installer {
 
         if optimized {
             crate::successln!(
+                self.riff.output(),
                 "{} Generated {description} containing {} classes",
                 style("Success:").green().bold(),
                 result.class_count
             );
         } else {
             crate::successln!(
+                self.riff.output(),
                 "{} Generated autoload files",
                 style("Success:").green().bold()
             );
@@ -2343,7 +2428,7 @@ impl Installer {
 
         abandoned_packages.sort_by(|a, b| a.name.cmp(&b.name));
 
-        crate::errln!();
+        crate::errln!(self.riff.output());
         for pkg in abandoned_packages {
             if let Some(ref abandoned) = pkg.abandoned {
                 let replacement = match abandoned.replacement() {
@@ -2351,6 +2436,7 @@ impl Installer {
                     None => "No replacement was suggested".to_string(),
                 };
                 crate::errln!(
+                    self.riff.output(),
                     "{} Package {} is abandoned, you should avoid using it. {}.",
                     style("Warning:").yellow(),
                     pkg.name,
@@ -2369,7 +2455,7 @@ impl Installer {
         }
         let suggestion_count = suggestions.filtered(Some(packages)).len();
         if suggestion_count > 0 {
-            crate::errln!(
+            crate::infoln!(self.riff.output(),
                 "{} package suggestion{} were added by new dependencies, use `riff suggest` to see details.",
                 suggestion_count,
                 if suggestion_count == 1 { "" } else { "s" }
@@ -2388,13 +2474,17 @@ impl Installer {
                 .filter(|package| !package.funding.is_empty())
                 .count();
             if funding_count > 0 {
-                crate::errln!(
+                crate::infoln!(
+                    self.riff.output(),
                     "{} package{} you are using {} looking for funding.",
                     funding_count,
                     if funding_count == 1 { "" } else { "s" },
                     if funding_count == 1 { "is" } else { "are" }
                 );
-                crate::errln!("Use the `riff fund` command to find out more!");
+                crate::infoln!(
+                    self.riff.output(),
+                    "Use the `riff fund` command to find out more!"
+                );
             }
         }
     }

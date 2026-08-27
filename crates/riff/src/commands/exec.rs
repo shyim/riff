@@ -32,7 +32,7 @@ struct BinaryEntry {
     executable: PathBuf,
 }
 
-pub fn execute(args: ExecArgs) -> Result<i32> {
+pub fn execute(args: ExecArgs, context: &crate::CommandContext) -> Result<i32> {
     let working_dir = args
         .working_dir
         .canonicalize()
@@ -52,9 +52,9 @@ pub fn execute(args: ExecArgs) -> Result<i32> {
                 config.get_bin_dir().display()
             );
         }
-        riff_core::outln!("Available binaries:");
+        riff_core::outln!(context.output(), "Available binaries:");
         for binary in &binaries {
-            riff_core::outln!("- {}", binary.display);
+            riff_core::outln!(context.output(), "- {}", binary.display);
         }
         return Ok(0);
     }

@@ -1,8 +1,8 @@
 //! Remove command - remove a package from the project.
 
 use anyhow::{Context, Result};
-use console::style;
 use indexmap::IndexMap;
+use riff_core::output::style;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 
@@ -335,11 +335,14 @@ fn installed_package_names(vendor_dir: &std::path::Path) -> Result<Vec<String>> 
 
 pub async fn execute(args: RemoveArgs, context: &CommandContext) -> Result<i32> {
     if args.packages.is_empty() && !args.unused {
-        riff_core::errln!("Not enough arguments (missing: \"packages\").");
+        riff_core::errln!(
+            context.output(),
+            "Not enough arguments (missing: \"packages\")."
+        );
         return Ok(1);
     }
     if let Some(warning) = deprecated_dependency_warning(&args) {
-        riff_core::warnln!("{warning}");
+        riff_core::warnln!(context.output(), "{warning}");
     }
     // Accepted for Composer CLI compatibility. Remove does not currently run a
     // separate audit or interactive prompt of its own.
@@ -353,6 +356,7 @@ pub async fn execute(args: RemoveArgs, context: &CommandContext) -> Result<i32> 
     let json_path = working_dir.join("composer.json");
     if !json_path.exists() {
         riff_core::errln!(
+            context.output(),
             "{} No composer.json found in {}",
             style("Error:").red().bold(),
             working_dir.display()
@@ -386,19 +390,23 @@ pub async fn execute(args: RemoveArgs, context: &CommandContext) -> Result<i32> 
     ) {
         Ok(plan) => plan,
         Err(message) => {
-            riff_core::errln!("{message}");
+            riff_core::errln!(context.output(), "{message}");
             return Ok(1);
         }
     };
     if plan.no_unused_packages && args.packages.is_empty() {
-        riff_core::outln!("No unused packages to remove");
+        riff_core::outln!(context.output(), "No unused packages to remove");
         return Ok(0);
     }
     for warning in &plan.warnings {
-        riff_core::warnln!("{warning}");
+        riff_core::warnln!(context.output(), "{warning}");
     }
     if plan.removed.is_empty() && plan.update_packages.is_empty() {
-        riff_core::outln!("{} Nothing to remove", style("Info:").cyan());
+        riff_core::outln!(
+            context.output(),
+            "{} Nothing to remove",
+            style("Info:").cyan()
+        );
         return Ok(0);
     }
 
@@ -413,31 +421,50 @@ pub async fn execute(args: RemoveArgs, context: &CommandContext) -> Result<i32> 
         .with_lockfile(lock)
         .with_platform(context.platform().clone())
         .with_runtime(context.runtime().clone())
+        .with_output(context.output().clone())
         .with_policy_environment(PolicyEnvironment::from_process())
         .plugins_enabled(!args.no_plugins)
         .dry_run(args.dry_run)
         .build()?;
 
-    riff_core::outln!("{} Removing packages", style("Riff").green().bold());
+    riff_core::outln!(
+        context.output(),
+        "{} Removing packages",
+        style("Riff").green().bold()
+    );
     if args.dry_run {
-        riff_core::outln!("{} Running in dry-run mode", style("Info:").cyan());
+        riff_core::outln!(
+            context.output(),
+            "{} Running in dry-run mode",
+            style("Info:").cyan()
+        );
     }
 
     for name in &plan.removed {
-        riff_core::outln!("  {} {}", style("-").red(), style(name).white().bold());
+        riff_core::outln!(
+            context.output(),
+            "  {} {}",
+            style("-").red(),
+            style(name).white().bold()
+        );
     }
 
     // Write updated composer.json
     if plan.should_write_manifest(args.dry_run) {
         write_manifest(&json_path, &riff.manifest).context("Failed to write composer.json")?;
     } else if plan.manifest_changed() {
-        riff_core::outln!("{} composer.json would be updated", style("Info:").cyan());
+        riff_core::outln!(
+            context.output(),
+            "{} composer.json would be updated",
+            style("Info:").cyan()
+        );
     }
 
     // Run update
     if !args.no_update {
         let dependency_mode = DependencyUpdateMode::from_args(&args);
         riff_core::outln!(
+            context.output(),
             "Running riff update {}{}",
             plan.update_packages.join(" "),
             dependency_mode.display_flag()
@@ -475,7 +502,7 @@ pub async fn execute(args: RemoveArgs, context: &CommandContext) -> Result<i32> 
             let remaining = still_installed(&plan.removed, &installed);
             if !remaining.is_empty() {
                 for package in remaining {
-                    riff_core::errln!(
+                    riff_core::errln!(context.output(),
                         "Removal failed, {package} is still present, it may be required by another package. See `riff why {package}`"
                     );
                 }
@@ -486,12 +513,14 @@ pub async fn execute(args: RemoveArgs, context: &CommandContext) -> Result<i32> 
         result
     } else if args.dry_run {
         riff_core::outln!(
+            context.output(),
             "{} Update skipped; no files were changed",
             style("Info:").cyan()
         );
         Ok(0)
     } else {
         riff_core::successln!(
+            context.output(),
             "{} {} packages removed from composer.json",
             style("Success:").green().bold(),
             plan.removed.len()

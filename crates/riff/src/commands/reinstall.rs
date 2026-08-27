@@ -69,11 +69,15 @@ pub async fn execute(args: ReinstallArgs, context: &CommandContext) -> Result<i3
 
     for pattern in &selection.unmatched_patterns {
         riff_core::warnln!(
+            context.output(),
             "Pattern \"{pattern}\" does not match any currently installed packages."
         );
     }
     if selection.packages.is_empty() {
-        riff_core::warnln!("Found no packages to reinstall, aborting.");
+        riff_core::warnln!(
+            context.output(),
+            "Found no packages to reinstall, aborting."
+        );
         return Ok(1);
     }
 
@@ -82,6 +86,7 @@ pub async fn execute(args: ReinstallArgs, context: &CommandContext) -> Result<i3
         .with_manifest(manifest)
         .with_platform(context.platform().clone())
         .with_runtime(context.runtime().clone())
+        .with_output(context.output().clone())
         .plugins_enabled(!args.no_plugins);
     builder = crate::install::apply_install_preference(
         builder,
@@ -103,6 +108,7 @@ pub async fn execute(args: ReinstallArgs, context: &CommandContext) -> Result<i3
 
     for package in install_order.iter().rev() {
         riff_core::outln!(
+            context.output(),
             "  - Removing {} ({})",
             package.name,
             package.pretty_version()
@@ -111,6 +117,7 @@ pub async fn execute(args: ReinstallArgs, context: &CommandContext) -> Result<i3
     riff.installation_manager.execute(&transaction).await?;
     for package in &install_order {
         riff_core::outln!(
+            context.output(),
             "  - Installing {} ({})",
             package.name,
             package.pretty_version()

@@ -99,6 +99,7 @@ pub fn execute(args: ArchiveArgs, context: &CommandContext) -> Result<i32> {
             dev_mode: true,
             plugins: &plugins,
             bin_dir: config.get_bin_dir(),
+            output: context.output(),
         },
     )?;
     if code != 0 {
@@ -112,6 +113,7 @@ pub fn execute(args: ArchiveArgs, context: &CommandContext) -> Result<i32> {
     };
 
     riff_core::errln!(
+        context.output(),
         "Creating the archive into \"{}\".",
         settings.directory.display()
     );
@@ -123,7 +125,7 @@ pub fn execute(args: ArchiveArgs, context: &CommandContext) -> Result<i32> {
         args.file.as_deref(),
         args.ignore_filters,
     )?;
-    riff_core::outln!("Created: {}", archive.display());
+    riff_core::outln!(context.output(), "Created: {}", archive.display());
 
     let code = run_event_script(
         "post-archive-cmd",
@@ -135,6 +137,7 @@ pub fn execute(args: ArchiveArgs, context: &CommandContext) -> Result<i32> {
             dev_mode: true,
             plugins: &plugins,
             bin_dir: config.get_bin_dir(),
+            output: context.output(),
         },
     )?;
     Ok(code)

@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use crate::cache::runtime_cache_dir;
 use crate::http::HttpClient;
+use crate::output::Output;
 use crate::package::{Dist, Source};
 use crate::{Package, Result, RiffError};
 
@@ -75,6 +76,7 @@ pub struct DownloadManager {
     config: DownloadConfig,
     preferences: Vec<(String, DownloadPreference)>,
     source_fallback: bool,
+    output: Output,
 }
 
 const MAX_CONCURRENT_EXTRACTIONS: usize = 10;
@@ -82,6 +84,14 @@ const MAX_CONCURRENT_EXTRACTIONS: usize = 10;
 impl DownloadManager {
     /// Create a new download manager
     pub fn new(http_client: Arc<HttpClient>, config: DownloadConfig) -> Self {
+        Self::new_with_output(http_client, config, Output::silent())
+    }
+
+    pub fn new_with_output(
+        http_client: Arc<HttpClient>,
+        config: DownloadConfig,
+        output: Output,
+    ) -> Self {
         Self {
             file_downloader: FileDownloader::new(http_client),
             git_downloader: GitDownloader::new(),
@@ -90,6 +100,7 @@ impl DownloadManager {
             config,
             preferences: Vec::new(),
             source_fallback: false,
+            output,
         }
     }
 
@@ -394,7 +405,12 @@ impl DownloadManager {
                 .download(&url, &cache_file, None::<fn(u64, u64)>)
                 .await
             {
-                crate::warnln!("Warning: Failed to download from {}: {}", url, error);
+                crate::warnln!(
+                    self.output,
+                    "Warning: Failed to download from {}: {}",
+                    url,
+                    error
+                );
                 continue;
             }
             if let Some(checksum) = checksum {
@@ -462,7 +478,12 @@ impl DownloadManager {
                 .await;
 
             if let Err(e) = result {
-                crate::warnln!("Warning: Failed to download from {}: {}", url, e);
+                crate::warnln!(
+                    self.output,
+                    "Warning: Failed to download from {}: {}",
+                    url,
+                    e
+                );
                 continue;
             }
 

@@ -50,7 +50,7 @@ pub struct ValidateArgs {
     pub working_dir: PathBuf,
 }
 
-pub async fn execute(args: ValidateArgs) -> Result<i32> {
+pub async fn execute(args: ValidateArgs, context: &crate::CommandContext) -> Result<i32> {
     let working_dir = args
         .working_dir
         .canonicalize()
@@ -58,11 +58,11 @@ pub async fn execute(args: ValidateArgs) -> Result<i32> {
     let (manifest_path, display_name) = resolve_manifest_path(&working_dir, args.file.as_deref());
 
     if !manifest_path.exists() {
-        riff_core::errln!("{display_name} not found.");
+        riff_core::errln!(context.output(), "{display_name} not found.");
         return Ok(3);
     }
     if !is_readable(&manifest_path) {
-        riff_core::errln!("{display_name} is not readable.");
+        riff_core::errln!(context.output(), "{display_name} is not readable.");
         return Ok(3);
     }
 
@@ -92,6 +92,7 @@ pub async fn execute(args: ValidateArgs) -> Result<i32> {
             let display_lock = lock_path_for(Path::new(&display_name));
             for _ in 0..2 {
                 riff_core::errln!(
+                    context.output(),
                     "{} is present but ignored as the \"lock\" config option is disabled.",
                     display_lock.display()
                 );
@@ -104,11 +105,14 @@ pub async fn execute(args: ValidateArgs) -> Result<i32> {
     let mut exit_code = output_result(
         &display_name,
         validation,
-        !args.no_check_publish,
-        check_lock,
         lock_errors,
-        args.strict,
-        true,
+        OutputResultOptions {
+            check_publish: !args.no_check_publish,
+            check_lock,
+            strict: args.strict,
+            print_schema_url: true,
+        },
+        context.output(),
     );
 
     if args.with_dependencies {
@@ -124,11 +128,14 @@ pub async fn execute(args: ValidateArgs) -> Result<i32> {
             exit_code = exit_code.max(output_result(
                 &dependency_name,
                 validation,
-                !args.no_check_publish,
-                false,
                 Vec::new(),
-                args.strict,
-                false,
+                OutputResultOptions {
+                    check_publish: !args.no_check_publish,
+                    check_lock: false,
+                    strict: args.strict,
+                    print_schema_url: false,
+                },
+                context.output(),
             ));
         }
     }
@@ -233,12 +240,16 @@ fn is_readable(path: &Path) -> bool {
 fn output_result(
     name: &str,
     validation: ManifestValidation,
-    check_publish: bool,
-    check_lock: bool,
     lock_errors: Vec<String>,
-    strict: bool,
-    print_schema_url: bool,
+    options: OutputResultOptions,
+    output: &riff_core::Output,
 ) -> i32 {
+    let OutputResultOptions {
+        check_publish,
+        check_lock,
+        strict,
+        print_schema_url,
+    } = options;
     let ManifestValidation {
         errors,
         publish_errors,
@@ -246,56 +257,69 @@ fn output_result(
     } = validation;
 
     if !errors.is_empty() {
-        riff_core::errln!("{name} is invalid, the following errors/warnings were found:");
+        riff_core::errln!(
+            output,
+            "{name} is invalid, the following errors/warnings were found:"
+        );
     } else if check_publish && !publish_errors.is_empty() {
-        riff_core::errln!("{name} is valid for simple Composer-compatible usage but has");
-        riff_core::errln!("strict errors that make it unable to be published as a package");
+        riff_core::errln!(
+            output,
+            "{name} is valid for simple Composer-compatible usage but has"
+        );
+        riff_core::errln!(
+            output,
+            "strict errors that make it unable to be published as a package"
+        );
         if print_schema_url {
             riff_core::errln!(
+                output,
                 "See https://getcomposer.org/doc/04-schema.md for details on the schema"
             );
         }
     } else if !warnings.is_empty() {
-        riff_core::errln!("{name} is valid, but with a few warnings");
+        riff_core::errln!(output, "{name} is valid, but with a few warnings");
         if print_schema_url {
             riff_core::errln!(
+                output,
                 "See https://getcomposer.org/doc/04-schema.md for details on the schema"
             );
         }
     } else if !lock_errors.is_empty() {
         riff_core::outln!(
+            output,
             "{name} is valid but your composer.lock has some {}",
             if check_lock { "errors" } else { "warnings" }
         );
     } else {
-        riff_core::outln!("{name} is valid");
+        riff_core::outln!(output, "{name} is valid");
     }
 
     if !errors.is_empty() {
-        riff_core::errln!("# General errors");
+        riff_core::errln!(output, "# General errors");
         for error in &errors {
-            riff_core::errln!("- {error}");
+            riff_core::errln!(output, "- {error}");
         }
     }
     if check_publish && !publish_errors.is_empty() {
-        riff_core::errln!("# Publish errors");
+        riff_core::errln!(output, "# Publish errors");
         for error in &publish_errors {
-            riff_core::errln!("- {error}");
+            riff_core::errln!(output, "- {error}");
         }
     }
     if !warnings.is_empty() {
-        riff_core::errln!("# General warnings");
+        riff_core::errln!(output, "# General warnings");
         for warning in &warnings {
-            riff_core::errln!("- {warning}");
+            riff_core::errln!(output, "- {warning}");
         }
     }
     if !lock_errors.is_empty() {
         riff_core::errln!(
+            output,
             "# Lock file {}",
             if check_lock { "errors" } else { "warnings" }
         );
         for error in &lock_errors {
-            riff_core::errln!("{error}");
+            riff_core::errln!(output, "{error}");
         }
     }
 
@@ -309,6 +333,14 @@ fn output_result(
     } else {
         0
     }
+}
+
+#[derive(Clone, Copy)]
+struct OutputResultOptions {
+    check_publish: bool,
+    check_lock: bool,
+    strict: bool,
+    print_schema_url: bool,
 }
 
 fn validate_lock(

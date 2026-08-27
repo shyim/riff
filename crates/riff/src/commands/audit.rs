@@ -77,6 +77,7 @@ pub(crate) async fn prefetch_for_install(
     config: Config,
     lock: RiffLockfile,
     no_dev: bool,
+    output: riff_core::Output,
 ) -> Result<PrefetchedInstallAudit> {
     let manifest_value = serde_json::to_value(&manifest)?;
     let vendor_dir = working_dir.join(&config.vendor_dir);
@@ -98,6 +99,7 @@ pub(crate) async fn prefetch_for_install(
         .with_lockfile(Some(lock))
         .with_platform(Platform::empty())
         .with_policy_environment(PolicyEnvironment::from_process())
+        .with_output(output)
         .plugins_enabled(false)
         .build()?;
     let dependency_policy =
@@ -114,6 +116,7 @@ pub(crate) async fn prefetch_for_install(
 pub(crate) async fn render_prefetched_install(
     prefetched: PrefetchedInstallAudit,
     args: AuditArgs,
+    context: &crate::CommandContext,
 ) -> Result<i32> {
     let repository = InstalledRepository::new(prefetched.vendor_dir.clone());
     repository
@@ -130,10 +133,14 @@ pub(crate) async fn render_prefetched_install(
 
     if installed_names.is_empty() {
         if !prefetched.has_root_requirements {
-            riff_core::outln!("{}", "No packages - skipping audit.".yellow());
+            riff_core::outln!(
+                context.output(),
+                "{}",
+                "No packages - skipping audit.".yellow()
+            );
             return Ok(0);
         }
-        riff_core::outln!(
+        riff_core::outln!(context.output(),
             "No installed packages found. Please run \"riff install\" before running \"riff audit\""
         );
         return Ok(1);
@@ -145,21 +152,31 @@ pub(crate) async fn render_prefetched_install(
         .filter(|package| installed_names.contains(canonical_package_name(&package.name).as_ref()))
         .collect::<Vec<_>>();
     if audited_packages.is_empty() {
-        riff_core::outln!("{}", "No packages - skipping audit.".yellow());
+        riff_core::outln!(
+            context.output(),
+            "{}",
+            "No packages - skipping audit.".yellow()
+        );
         return Ok(0);
     }
 
-    render_audit_result(&args, &prefetched.dependency_policy, audited_packages)
+    render_audit_result(
+        &args,
+        &prefetched.dependency_policy,
+        audited_packages,
+        context,
+    )
 }
 
-pub async fn execute(args: AuditArgs) -> Result<i32> {
-    execute_with_context(args, None, None).await
+pub async fn execute(args: AuditArgs, context: &crate::CommandContext) -> Result<i32> {
+    execute_with_context(args, None, None, context).await
 }
 
 pub(crate) async fn execute_with_context(
     args: AuditArgs,
     existing_lock: Option<&RiffLockfile>,
     existing_installed_names: Option<&HashSet<String>>,
+    context: &crate::CommandContext,
 ) -> Result<i32> {
     let working_dir = args
         .working_dir
@@ -195,10 +212,14 @@ pub(crate) async fn execute_with_context(
     if let Some(installed_names) = installed_names {
         if installed_names.is_empty() {
             if !has_auditable_root_requirements(&manifest, args.no_dev) {
-                riff_core::outln!("{}", "No packages - skipping audit.".yellow());
+                riff_core::outln!(
+                    context.output(),
+                    "{}",
+                    "No packages - skipping audit.".yellow()
+                );
                 return Ok(0);
             }
-            riff_core::outln!(
+            riff_core::outln!(context.output(),
                 "No installed packages found. Please run \"riff install\" before running \"riff audit\""
             );
             return Ok(1);
@@ -228,7 +249,11 @@ pub(crate) async fn execute_with_context(
         })
         .collect();
     if audited_packages.is_empty() {
-        riff_core::outln!("{}", "No packages - skipping audit.".yellow());
+        riff_core::outln!(
+            context.output(),
+            "{}",
+            "No packages - skipping audit.".yellow()
+        );
         return Ok(0);
     }
 
@@ -238,6 +263,7 @@ pub(crate) async fn execute_with_context(
         .with_lockfile(Some(lock.clone()))
         .with_platform(Platform::empty())
         .with_policy_environment(PolicyEnvironment::from_process())
+        .with_output(context.output().clone())
         .plugins_enabled(false)
         .build()?;
     if !args.ignore_severity.is_empty() {
@@ -259,13 +285,14 @@ pub(crate) async fn execute_with_context(
     let dependency_policy =
         PackagePolicy::load(&riff, &runtime_package_refs, PolicyScope::Audit, false).await?;
 
-    render_audit_result(&args, &dependency_policy, audited_packages)
+    render_audit_result(&args, &dependency_policy, audited_packages, context)
 }
 
 fn render_audit_result(
     args: &AuditArgs,
     dependency_policy: &PackagePolicy,
     audited_packages: Vec<&LockedPackage>,
+    context: &crate::CommandContext,
 ) -> Result<i32> {
     let runtime_packages = audited_packages
         .iter()
@@ -315,17 +342,17 @@ fn render_audit_result(
 
     match args.format.as_str() {
         "json" => {
-            output_json(&report, &abandoned_packages)?;
+            output_json(&report, &abandoned_packages, context)?;
         }
         "plain" => {
-            output_plain(&report, &abandoned_packages)?;
+            output_plain(&report, &abandoned_packages, context)?;
         }
         "summary" => {
-            output_summary(&report)?;
+            output_summary(&report, context)?;
         }
         _ => {
             // table format (default)
-            output_table(&report, &abandoned_packages)?;
+            output_table(&report, &abandoned_packages, context)?;
         }
     }
 
@@ -585,7 +612,11 @@ fn audit_exit_code(
     i32::from(has_vulnerabilities || (has_abandoned && abandoned_behavior == "fail"))
 }
 
-fn output_json(report: &AuditReport, abandoned_packages: &[&LockedPackage]) -> Result<()> {
+fn output_json(
+    report: &AuditReport,
+    abandoned_packages: &[&LockedPackage],
+    context: &crate::CommandContext,
+) -> Result<()> {
     #[derive(Serialize)]
     struct JsonOutput<'a> {
         advisories: serde_json::Value,
@@ -616,7 +647,11 @@ fn output_json(report: &AuditReport, abandoned_packages: &[&LockedPackage]) -> R
         filter: btree_map_or_empty_array(&report.filter)?,
     };
 
-    riff_core::outln!("{}", serde_json::to_string_pretty(&output)?);
+    riff_core::outln!(
+        context.output(),
+        "{}",
+        serde_json::to_string_pretty(&output)?
+    );
     Ok(())
 }
 
@@ -636,60 +671,88 @@ fn map_or_empty_array<T: Serialize>(map: &HashMap<String, T>) -> Result<serde_js
     }
 }
 
-fn output_table(response: &AuditReport, abandoned_packages: &[&LockedPackage]) -> Result<()> {
+fn output_table(
+    response: &AuditReport,
+    abandoned_packages: &[&LockedPackage],
+    context: &crate::CommandContext,
+) -> Result<()> {
     let total_advisories: usize = response.advisories.values().map(|v| v.len()).sum();
     let affected_packages = response.advisories.len();
 
     if total_advisories > 0 {
         riff_core::outln!(
+            context.output(),
             "{}",
             security_summary(total_advisories, affected_packages, false)
                 .red()
                 .bold()
         );
-        riff_core::outln!();
+        riff_core::outln!(context.output());
 
         for advisories in response.advisories.values() {
             for advisory in advisories {
-                riff_core::outln!("{}", "─".repeat(80).bright_black());
-                riff_core::outln!("{}: {}", "Package".bold(), advisory.package_name);
+                riff_core::outln!(context.output(), "{}", "─".repeat(80).bright_black());
                 riff_core::outln!(
+                    context.output(),
+                    "{}: {}",
+                    "Package".bold(),
+                    advisory.package_name
+                );
+                riff_core::outln!(
+                    context.output(),
                     "{}: {}",
                     "Severity".bold(),
                     colorize_severity(advisory.severity.as_deref())
                 );
-                riff_core::outln!("{}: {}", "Advisory ID".bold(), advisory.advisory_id);
                 riff_core::outln!(
+                    context.output(),
+                    "{}: {}",
+                    "Advisory ID".bold(),
+                    advisory.advisory_id
+                );
+                riff_core::outln!(
+                    context.output(),
                     "{}: {}",
                     "CVE".bold(),
                     advisory.cve.as_deref().unwrap_or("NO CVE")
                 );
-                riff_core::outln!("{}: {}", "Title".bold(), advisory.title);
+                riff_core::outln!(context.output(), "{}: {}", "Title".bold(), advisory.title);
                 if let Some(link) = &advisory.link {
-                    riff_core::outln!("{}: {}", "URL".bold(), link);
+                    riff_core::outln!(context.output(), "{}: {}", "URL".bold(), link);
                 }
                 riff_core::outln!(
+                    context.output(),
                     "{}: {}",
                     "Affected versions".bold(),
                     advisory.affected_versions
                 );
-                riff_core::outln!("{}: {}", "Reported at".bold(), advisory.reported_at);
-                riff_core::outln!();
+                riff_core::outln!(
+                    context.output(),
+                    "{}: {}",
+                    "Reported at".bold(),
+                    advisory.reported_at
+                );
+                riff_core::outln!(context.output());
             }
         }
     } else {
-        riff_core::outln!("{}", security_summary(0, 0, false).green().bold());
+        riff_core::outln!(
+            context.output(),
+            "{}",
+            security_summary(0, 0, false).green().bold()
+        );
     }
 
     if let Some(summary) = response.filter_summary(false) {
-        riff_core::outln!("{}", summary.yellow().bold());
+        riff_core::outln!(context.output(), "{}", summary.yellow().bold());
         for diagnostic in response.filter_diagnostics() {
-            riff_core::outln!("{diagnostic}");
+            riff_core::outln!(context.output(), "{diagnostic}");
         }
     }
 
     if !abandoned_packages.is_empty() {
         riff_core::outln!(
+            context.output(),
             "{}",
             format!(
                 "Found {} abandoned package{}:",
@@ -703,26 +766,36 @@ fn output_table(response: &AuditReport, abandoned_packages: &[&LockedPackage]) -
             .yellow()
             .bold()
         );
-        riff_core::outln!();
+        riff_core::outln!(context.output());
 
         for pkg in abandoned_packages {
             let replacement = pkg
                 .abandoned_replacement()
                 .map(|r| format!("Use {} instead", r))
                 .unwrap_or_else(|| "No replacement was suggested".to_string());
-            riff_core::outln!("  {} is abandoned. {}", pkg.name.yellow(), replacement);
+            riff_core::outln!(
+                context.output(),
+                "  {} is abandoned. {}",
+                pkg.name.yellow(),
+                replacement
+            );
         }
     }
 
     Ok(())
 }
 
-fn output_plain(response: &AuditReport, abandoned_packages: &[&LockedPackage]) -> Result<()> {
+fn output_plain(
+    response: &AuditReport,
+    abandoned_packages: &[&LockedPackage],
+    context: &crate::CommandContext,
+) -> Result<()> {
     let total_advisories: usize = response.advisories.values().map(|v| v.len()).sum();
     let affected_packages = response.advisories.len();
 
     if total_advisories > 0 {
         riff_core::errln!(
+            context.output(),
             "{}",
             security_summary(total_advisories, affected_packages, false)
         );
@@ -731,32 +804,49 @@ fn output_plain(response: &AuditReport, abandoned_packages: &[&LockedPackage]) -
         for advisories in response.advisories.values() {
             for advisory in advisories {
                 if !first {
-                    riff_core::errln!("--------");
+                    riff_core::errln!(context.output(), "--------");
                 }
-                riff_core::errln!("Package: {}", advisory.package_name);
-                riff_core::errln!("Severity: {}", advisory.severity.as_deref().unwrap_or(""));
-                riff_core::errln!("Advisory ID: {}", advisory.advisory_id);
-                riff_core::errln!("CVE: {}", advisory.cve.as_deref().unwrap_or("NO CVE"));
-                riff_core::errln!("Title: {}", advisory.title);
-                riff_core::errln!("URL: {}", advisory.link.as_deref().unwrap_or(""));
-                riff_core::errln!("Affected versions: {}", advisory.affected_versions);
-                riff_core::errln!("Reported at: {}", advisory.reported_at);
+                riff_core::errln!(context.output(), "Package: {}", advisory.package_name);
+                riff_core::errln!(
+                    context.output(),
+                    "Severity: {}",
+                    advisory.severity.as_deref().unwrap_or("")
+                );
+                riff_core::errln!(context.output(), "Advisory ID: {}", advisory.advisory_id);
+                riff_core::errln!(
+                    context.output(),
+                    "CVE: {}",
+                    advisory.cve.as_deref().unwrap_or("NO CVE")
+                );
+                riff_core::errln!(context.output(), "Title: {}", advisory.title);
+                riff_core::errln!(
+                    context.output(),
+                    "URL: {}",
+                    advisory.link.as_deref().unwrap_or("")
+                );
+                riff_core::errln!(
+                    context.output(),
+                    "Affected versions: {}",
+                    advisory.affected_versions
+                );
+                riff_core::errln!(context.output(), "Reported at: {}", advisory.reported_at);
                 first = false;
             }
         }
     } else {
-        riff_core::errln!("{}", security_summary(0, 0, false));
+        riff_core::errln!(context.output(), "{}", security_summary(0, 0, false));
     }
 
     if let Some(summary) = response.filter_summary(false) {
-        riff_core::errln!("{summary}");
+        riff_core::errln!(context.output(), "{summary}");
         for diagnostic in response.filter_diagnostics() {
-            riff_core::errln!("{diagnostic}");
+            riff_core::errln!(context.output(), "{diagnostic}");
         }
     }
 
     if !abandoned_packages.is_empty() {
         riff_core::errln!(
+            context.output(),
             "Found {} abandoned package{}:",
             abandoned_packages.len(),
             if abandoned_packages.len() > 1 {
@@ -771,28 +861,37 @@ fn output_plain(response: &AuditReport, abandoned_packages: &[&LockedPackage]) -
                 .abandoned_replacement()
                 .map(|r| format!("Use {} instead", r))
                 .unwrap_or_else(|| "No replacement was suggested".to_string());
-            riff_core::errln!("{} is abandoned. {}", pkg.name, replacement);
+            riff_core::errln!(
+                context.output(),
+                "{} is abandoned. {}",
+                pkg.name,
+                replacement
+            );
         }
     }
 
     Ok(())
 }
 
-fn output_summary(response: &AuditReport) -> Result<()> {
+fn output_summary(response: &AuditReport, context: &crate::CommandContext) -> Result<()> {
     let total_advisories: usize = response.advisories.values().map(|v| v.len()).sum();
     let affected_packages = response.advisories.len();
 
     if total_advisories > 0 {
         riff_core::errln!(
+            context.output(),
             "{}",
             security_summary(total_advisories, affected_packages, true)
         );
-        riff_core::errln!("Run \"riff audit\" for a full list of advisories.");
+        riff_core::errln!(
+            context.output(),
+            "Run \"riff audit\" for a full list of advisories."
+        );
     } else {
-        riff_core::errln!("{}", security_summary(0, 0, true));
+        riff_core::errln!(context.output(), "{}", security_summary(0, 0, true));
     }
     if let Some(summary) = response.filter_summary(true) {
-        riff_core::errln!("{summary}");
+        riff_core::errln!(context.output(), "{summary}");
     }
 
     Ok(())
@@ -979,8 +1078,13 @@ mod tests {
         };
         let lock = RiffLockfile::default();
         let installed_names = HashSet::default();
+        let context = crate::CommandContext::new(
+            riff_core::RuntimeContext::new("php".into(), "riff".into()),
+            riff_core::Platform::empty(),
+        );
 
-        let result = execute_with_context(args, Some(&lock), Some(&installed_names)).await;
+        let result =
+            execute_with_context(args, Some(&lock), Some(&installed_names), &context).await;
 
         assert_eq!(result.unwrap(), 0);
     }

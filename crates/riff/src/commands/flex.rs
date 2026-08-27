@@ -85,7 +85,7 @@ pub async fn recipes(args: RecipesArgs, context: &CommandContext) -> Result<i32>
     let riff = load_riff(&args.working_dir, context, true)?;
     let entries = riff_core::plugin::flex::inspect_recipes(&riff, args.package.as_deref()).await?;
     if entries.is_empty() {
-        riff_core::errln!("No recipe found");
+        riff_core::errln!(context.output(), "No recipe found");
         return Ok(1);
     }
 
@@ -100,21 +100,25 @@ pub async fn recipes(args: RecipesArgs, context: &CommandContext) -> Result<i32>
         } else {
             "up to date"
         };
-        riff_core::outln!("name             : {}", entry.name);
-        riff_core::outln!("version          : {}", entry.package_version);
-        riff_core::outln!("status           : {status}");
+        riff_core::outln!(context.output(), "name             : {}", entry.name);
+        riff_core::outln!(
+            context.output(),
+            "version          : {}",
+            entry.package_version
+        );
+        riff_core::outln!(context.output(), "status           : {status}");
         if let Some(url) = &entry.installed_recipe_url {
-            riff_core::outln!("installed recipe : {url}");
+            riff_core::outln!(context.output(), "installed recipe : {url}");
         }
         if entry.is_outdated() {
             if let Some(url) = &entry.latest_recipe_url {
-                riff_core::outln!("latest recipe    : {url}");
+                riff_core::outln!(context.output(), "latest recipe    : {url}");
             }
         }
         if !entry.files.is_empty() {
-            riff_core::outln!("files            :");
+            riff_core::outln!(context.output(), "files            :");
             for file in &entry.files {
-                riff_core::outln!("  - {file}");
+                riff_core::outln!(context.output(), "  - {file}");
             }
         }
         return Ok(0);
@@ -135,7 +139,7 @@ pub async fn recipes(args: RecipesArgs, context: &CommandContext) -> Result<i32>
         } else {
             ""
         };
-        riff_core::outln!(" * {}{status}", entry.name);
+        riff_core::outln!(context.output(), " * {}{status}", entry.name);
     }
     Ok(if args.outdated && shown > 0 { 1 } else { 0 })
 }
@@ -148,9 +152,9 @@ pub async fn install_recipes(args: RecipesInstallArgs, context: &CommandContext)
     }
     let count = riff_core::plugin::flex::install_recipes(&riff, &args.packages, force).await?;
     if count == 0 {
-        riff_core::outln!("No recipes to install.");
+        riff_core::outln!(context.output(), "No recipes to install.");
     } else {
-        riff_core::successln!("Success: {count} recipes installed.");
+        riff_core::successln!(context.output(), "Success: {count} recipes installed.");
     }
     Ok(0)
 }
@@ -161,37 +165,64 @@ pub async fn update_recipe(args: RecipesUpdateArgs, context: &CommandContext) ->
     let riff = load_riff(&args.working_dir, context, true)?;
     let result = riff_core::plugin::flex::update_recipe(&riff, &args.package).await?;
     if result.up_to_date {
-        riff_core::outln!("The recipe for {} is already up to date.", args.package);
+        riff_core::outln!(
+            context.output(),
+            "The recipe for {} is already up to date.",
+            args.package
+        );
         return Ok(0);
     }
-    riff_core::successln!("Success: Recipe for {} updated.", args.package);
+    riff_core::successln!(
+        context.output(),
+        "Success: Recipe for {} updated.",
+        args.package
+    );
     if result.conflicted_files.is_empty() {
         stage_recipe_update(&working_dir, &result.changed_files)?;
         if result.changed_files.is_empty() {
-            riff_core::outln!("No project files changed as a result of the update.");
+            riff_core::outln!(
+                context.output(),
+                "No project files changed as a result of the update."
+            );
         } else {
-            riff_core::outln!("Use git diff --cached to review the recipe changes.");
+            riff_core::outln!(
+                context.output(),
+                "Use git diff --cached to review the recipe changes."
+            );
         }
     } else {
-        riff_core::errln!("The recipe was updated with conflicts in:");
+        riff_core::errln!(
+            context.output(),
+            "The recipe was updated with conflicts in:"
+        );
         for file in &result.conflicted_files {
-            riff_core::errln!("  - {file}");
+            riff_core::errln!(context.output(), "  - {file}");
         }
-        riff_core::errln!("Resolve the conflict markers, then stage the files normally.");
+        riff_core::errln!(
+            context.output(),
+            "Resolve the conflict markers, then stage the files normally."
+        );
     }
     if !result.skipped_deleted_files.is_empty() {
-        riff_core::outln!("The following locally deleted or shared files were not updated:");
+        riff_core::outln!(
+            context.output(),
+            "The following locally deleted or shared files were not updated:"
+        );
         for file in &result.skipped_deleted_files {
-            riff_core::outln!("  - {file}");
+            riff_core::outln!(context.output(), "  - {file}");
         }
     }
     if result.copies_from_package {
         riff_core::outln!(
+            context.output(),
             "Note: copy-from-package paths are not changed automatically by recipe updates."
         );
     }
     if !args.no_changelog && !result.changed_files.is_empty() {
-        riff_core::outln!("Review the staged diff for the recipe changelog.");
+        riff_core::outln!(
+            context.output(),
+            "Review the staged diff for the recipe changelog."
+        );
     }
     Ok(0)
 }
@@ -314,7 +345,10 @@ file_put_contents($path.'.local.php', $contents, LOCK_EX);
     if !status.success() {
         return Ok(status.code().unwrap_or(1));
     }
-    riff_core::successln!("Successfully dumped .env files in .env.local.php");
+    riff_core::successln!(
+        context.output(),
+        "Successfully dumped .env files in .env.local.php"
+    );
     Ok(0)
 }
 
@@ -332,6 +366,7 @@ fn load_riff(working_dir: &Path, context: &CommandContext, plugins_enabled: bool
         .with_lockfile(Some(lock))
         .with_platform(context.platform().clone())
         .with_runtime(context.runtime().clone())
+        .with_output(context.output().clone())
         .plugins_enabled(plugins_enabled)
         .build()
 }

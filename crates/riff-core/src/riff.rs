@@ -9,6 +9,7 @@ use crate::http::HttpClient;
 use crate::installer::InstallConfig;
 use crate::installer::InstallationManager;
 use crate::json::{Repositories, Repository as JsonRepository, RiffLockfile, RiffManifest};
+use crate::output::Output;
 use crate::plugin::PluginManager;
 use crate::policy_config::{PackagePolicyConfig, PolicyEnvironment};
 use crate::repository::{ComposerRepository, Repository, RepositoryManager};
@@ -28,6 +29,7 @@ pub struct Riff {
     pub event_dispatcher: EventDispatcher,
     pub runtime: RuntimeContext,
     pub package_policy: PackagePolicyConfig,
+    pub output: Output,
     plugin_manager: PluginManager,
 }
 
@@ -66,6 +68,10 @@ impl Riff {
     pub fn plugins(&self) -> &PluginManager {
         &self.plugin_manager
     }
+
+    pub fn output(&self) -> &Output {
+        &self.output
+    }
 }
 
 /// Builder for creating Riff instances.
@@ -94,6 +100,7 @@ pub struct RiffBuilder {
     runtime: RuntimeContext,
     plugins_enabled: bool,
     policy_environment: PolicyEnvironment,
+    output: Output,
 
     // Repository options
     disable_packagist: Option<bool>,
@@ -121,6 +128,7 @@ impl RiffBuilder {
             runtime: RuntimeContext::default(),
             plugins_enabled: true,
             policy_environment: PolicyEnvironment::new(),
+            output: Output::silent(),
             disable_packagist: None,
         }
     }
@@ -230,6 +238,12 @@ impl RiffBuilder {
         self
     }
 
+    /// Route Riff-generated output through an instance-scoped handle.
+    pub fn with_output(mut self, output: Output) -> Self {
+        self.output = output;
+        self
+    }
+
     pub fn disable_packagist(mut self, disable: bool) -> Self {
         self.disable_packagist = Some(disable);
         self
@@ -267,9 +281,10 @@ impl RiffBuilder {
         let plugin_manager =
             PluginManager::builtins(self.plugins_enabled, config.allow_plugins.clone())?;
 
-        let installation_manager = Arc::new(InstallationManager::new(
+        let installation_manager = Arc::new(InstallationManager::new_with_output(
             http_client.clone(),
             install_config,
+            self.output.clone(),
         ));
 
         // Create event dispatcher with script listeners and plugins
@@ -288,16 +303,17 @@ impl RiffBuilder {
             event_dispatcher,
             runtime: self.runtime,
             package_policy,
+            output: self.output,
             plugin_manager,
         })
     }
 
     fn build_repository_manager(&mut self, manifest: &RiffManifest) -> Result<RepositoryManager> {
         if let Some(manager) = self.repository_manager.take() {
-            return Ok(manager);
+            return Ok(manager.with_output(self.output.clone()));
         }
 
-        let mut repository_manager = RepositoryManager::new();
+        let mut repository_manager = RepositoryManager::new().with_output(self.output.clone());
 
         for repo in manifest.repositories.as_vec() {
             if repository_is_pear(&repo) {
@@ -373,6 +389,7 @@ impl Clone for RiffBuilder {
             runtime: self.runtime.clone(),
             plugins_enabled: self.plugins_enabled,
             policy_environment: self.policy_environment.clone(),
+            output: self.output.clone(),
             disable_packagist: self.disable_packagist,
         }
     }

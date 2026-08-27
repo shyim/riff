@@ -21,10 +21,14 @@ pub struct GlobalArgs {
     pub no_interaction: bool,
 }
 
-pub fn execute(args: GlobalArgs) -> Result<i32> {
+pub fn execute(args: GlobalArgs, context: &crate::CommandContext) -> Result<i32> {
     let home = ConfigLoader::new(true).get_composer_home();
     prepare_home(&home)?;
-    riff_core::outln!("Changed current directory to {}", home.display());
+    riff_core::outln!(
+        context.output(),
+        "Changed current directory to {}",
+        home.display()
+    );
 
     let dynamic_script = is_script_command(&home, &args.command_name)?;
     let executable = std::env::current_exe().context("Failed to locate Riff executable")?;

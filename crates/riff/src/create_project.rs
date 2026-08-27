@@ -97,7 +97,7 @@ pub async fn execute(args: CreateProjectArgs, context: &CommandContext) -> Resul
         args.prefer_dist,
         args.prefer_install.as_deref(),
     )?;
-    let mut repositories = RepositoryManager::new();
+    let mut repositories = RepositoryManager::new().with_output(context.output().clone());
     if args.repository.is_empty() {
         repositories.add_repository(Arc::new(ComposerRepository::packagist_with_cache(
             runtime_cache_dir(),
@@ -128,7 +128,7 @@ pub async fn execute(args: CreateProjectArgs, context: &CommandContext) -> Resul
         .prefix(".riff-create-project-")
         .tempdir_in(parent)
         .context("Failed to create project staging directory")?;
-    let manager = DownloadManager::new(
+    let manager = DownloadManager::new_with_output(
         Arc::new(HttpClient::new()?),
         DownloadConfig {
             base_dir: current_dir,
@@ -137,6 +137,7 @@ pub async fn execute(args: CreateProjectArgs, context: &CommandContext) -> Resul
             cache_dir: runtime_cache_dir(),
             vendor_dir: staging.path().to_path_buf(),
         },
+        context.output().clone(),
     );
 
     let reference = package_reference(&package, args.verbose);
@@ -146,6 +147,7 @@ pub async fn execute(args: CreateProjectArgs, context: &CommandContext) -> Resul
         "Extracting archive"
     };
     riff_core::outln!(
+        context.output(),
         "- Installing {} ({}): {}{}",
         package.pretty_name(),
         package.pretty_version(),

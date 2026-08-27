@@ -1,7 +1,7 @@
 //! Script execution utilities for composer scripts.
 
+use crate::output::{style, Output};
 use anyhow::{Context, Result};
-use console::style;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -176,6 +176,7 @@ pub struct ScriptExecutionOptions<'a> {
     pub dev_mode: bool,
     pub plugins: &'a PluginManager,
     pub bin_dir: PathBuf,
+    pub output: &'a Output,
 }
 
 struct CommandEnvironment<'a> {
@@ -185,6 +186,7 @@ struct CommandEnvironment<'a> {
     manifest: &'a RiffManifest,
     runtime: &'a RuntimeContext,
     plugins: &'a PluginManager,
+    output: &'a Output,
 }
 
 /// Run a specific event script if it exists
@@ -215,18 +217,23 @@ pub fn run_event_script(
         manifest,
         runtime: options.runtime,
         plugins: options.plugins,
+        output: options.output,
     };
 
     for cmd in commands {
         if !quiet {
-            crate::outln!("{}", script_command_message(cmd));
+            crate::outln!(options.output, "{}", script_command_message(cmd));
         }
 
         let exit_code =
             run_command_with_stack(cmd, &[], &mut ctx, &mut script_stack, &environment)?;
 
         if exit_code != 0 {
-            crate::errln!("{}", script_failure_message(cmd, event_name, exit_code));
+            crate::errln!(
+                options.output,
+                "{}",
+                script_failure_message(cmd, event_name, exit_code)
+            );
             return Ok(exit_code);
         }
     }
@@ -263,25 +270,28 @@ pub fn run_script(
                 manifest,
                 runtime: options.runtime,
                 plugins: options.plugins,
+                output: options.output,
             },
         );
     }
 
     let Some(commands) = scripts.get(script_name) else {
         crate::errln!(
+            options.output,
             "{} Script '{}' is not defined in this package",
             style("Error:").red().bold(),
             script_name
         );
-        crate::errln!();
-        crate::errln!("Available scripts:");
+        crate::errln!(options.output);
+        crate::errln!(options.output, "Available scripts:");
         for name in scripts.keys() {
-            crate::errln!("  - {}", name);
+            crate::errln!(options.output, "  - {}", name);
         }
         return Ok(1);
     };
 
     crate::outln!(
+        options.output,
         "{} Running {} ({} command(s))",
         style(">").green().bold(),
         style(script_name).cyan(),
@@ -297,16 +307,21 @@ pub fn run_script(
         manifest,
         runtime: options.runtime,
         plugins: options.plugins,
+        output: options.output,
     };
 
     for cmd in commands {
-        crate::outln!("{}", script_command_message(cmd));
+        crate::outln!(options.output, "{}", script_command_message(cmd));
 
         let exit_code =
             run_command_with_stack(cmd, args, &mut ctx, &mut script_stack, &environment)?;
 
         if exit_code != 0 {
-            crate::errln!("{}", script_failure_message(cmd, script_name, exit_code));
+            crate::errln!(
+                options.output,
+                "{}",
+                script_failure_message(cmd, script_name, exit_code)
+            );
             return Ok(exit_code);
         }
     }
@@ -323,6 +338,26 @@ pub fn run_command(
     ctx: &mut ScriptContext,
     runtime: &RuntimeContext,
 ) -> Result<i32> {
+    run_command_with_output(
+        cmd,
+        working_dir,
+        extra_args,
+        scripts,
+        ctx,
+        runtime,
+        &Output::silent(),
+    )
+}
+
+pub fn run_command_with_output(
+    cmd: &str,
+    working_dir: &Path,
+    extra_args: &[String],
+    scripts: &HashMap<&str, Vec<String>>,
+    ctx: &mut ScriptContext,
+    runtime: &RuntimeContext,
+    output: &Output,
+) -> Result<i32> {
     let object_scripts = HashMap::new();
     let manifest = RiffManifest::default();
     let plugins = PluginManager::builtins(true, crate::config::AllowPlugins::Bool(true))?;
@@ -333,6 +368,7 @@ pub fn run_command(
         manifest: &manifest,
         runtime,
         plugins: &plugins,
+        output,
     };
     run_command_with_stack(cmd, extra_args, ctx, &mut Vec::new(), &environment)
 }
@@ -364,7 +400,7 @@ fn run_command_with_stack(
         let php_binary = shell_escape(environment.runtime.php_binary.to_string_lossy().as_ref());
         let full_cmd = append_arguments(&format!("{} {}", php_binary, php_cmd), extra_args);
 
-        return execute_shell_command(&full_cmd, environment.working_dir, ctx);
+        return execute_shell_command(&full_cmd, environment.working_dir, ctx, environment.output);
     }
 
     // Handle @composer - execute composer command via riff
@@ -376,6 +412,7 @@ fn run_command_with_stack(
                 manifest: environment.manifest,
                 working_dir: environment.working_dir,
                 runtime: environment.runtime,
+                output: environment.output,
             },
         )? {
             return Ok(exit_code);
@@ -383,7 +420,7 @@ fn run_command_with_stack(
         let riff_binary = shell_escape(environment.runtime.riff_binary.to_string_lossy().as_ref());
         let full_cmd = append_arguments(&format!("{} {}", riff_binary, composer_cmd), extra_args);
 
-        return execute_shell_command(&full_cmd, environment.working_dir, ctx);
+        return execute_shell_command(&full_cmd, environment.working_dir, ctx, environment.output);
     }
 
     // Handle @script-name - reference to another script
@@ -401,6 +438,7 @@ fn run_command_with_stack(
                 );
             }
             crate::outln!(
+                environment.output,
                 "{} Running referenced script: {}",
                 style(">").green(),
                 style(script_ref).cyan()
@@ -415,6 +453,7 @@ fn run_command_with_stack(
             let result = (|| {
                 for ref_cmd in ref_commands {
                     crate::outln!(
+                        environment.output,
                         "{} {}",
                         style(">").green(),
                         style(redact_command(ref_cmd)).dim()
@@ -443,6 +482,7 @@ fn run_command_with_stack(
                 );
             }
             crate::outln!(
+                environment.output,
                 "{} Running referenced script: {}",
                 style(">").green(),
                 style(script_ref).cyan()
@@ -461,6 +501,7 @@ fn run_command_with_stack(
             );
         } else {
             crate::errln!(
+                environment.output,
                 "{} Referenced script '{}' not found",
                 style("Warning:").yellow(),
                 script_ref
@@ -472,7 +513,7 @@ fn run_command_with_stack(
     // Regular shell command
     let full_cmd = append_arguments(cmd, extra_args);
 
-    execute_shell_command(&full_cmd, environment.working_dir, ctx)
+    execute_shell_command(&full_cmd, environment.working_dir, ctx, environment.output)
 }
 
 fn run_object_script(
@@ -490,6 +531,7 @@ fn run_object_script(
             manifest: environment.manifest,
             working_dir: environment.working_dir,
             runtime: environment.runtime,
+            output: environment.output,
         },
     )?
     else {
@@ -502,17 +544,29 @@ fn run_object_script(
     for action in actions {
         match action {
             ObjectScriptAction::Warning(message) => {
-                crate::errln!("{} {message}", style("Warning:").yellow());
+                crate::errln!(
+                    environment.output,
+                    "{} {message}",
+                    style("Warning:").yellow()
+                );
             }
             ObjectScriptAction::Execute { display, command } => {
-                crate::outln!("Executing script {display}");
-                let exit_code = execute_shell_command(&command, environment.working_dir, ctx)?;
+                crate::outln!(environment.output, "Executing script {display}");
+                let exit_code = execute_shell_command(
+                    &command,
+                    environment.working_dir,
+                    ctx,
+                    environment.output,
+                )?;
                 if exit_code != 0 {
-                    crate::errln!("{}", style("[KO]").red().bold());
-                    crate::errln!("Script {display} returned with error code {exit_code}");
+                    crate::errln!(environment.output, "{}", style("[KO]").red().bold());
+                    crate::errln!(
+                        environment.output,
+                        "Script {display} returned with error code {exit_code}"
+                    );
                     return Ok(exit_code);
                 }
-                crate::outln!("{}", style("[OK]").green().bold());
+                crate::outln!(environment.output, "{}", style("[OK]").green().bold());
             }
         }
     }
@@ -553,7 +607,12 @@ fn shell_escape(argument: &str) -> String {
 }
 
 /// Execute a shell command with optional timeout
-fn execute_shell_command(cmd: &str, working_dir: &Path, ctx: &ScriptContext) -> Result<i32> {
+fn execute_shell_command(
+    cmd: &str,
+    working_dir: &Path,
+    ctx: &ScriptContext,
+    output: &Output,
+) -> Result<i32> {
     // Prepend vendor/bin to PATH so scripts can find vendored binaries
     let vendor_bin = if ctx.bin_dir.is_absolute() {
         ctx.bin_dir.clone()
@@ -598,6 +657,7 @@ fn execute_shell_command(cmd: &str, working_dir: &Path, ctx: &ScriptContext) -> 
         Ok(output) => Ok(output.exit_code()),
         Err(ProcessError::Timeout(_)) => {
             crate::errln!(
+                output,
                 "{} Process timed out after {} seconds. Use Composer\\Config::disableProcessTimeout to disable.",
                 style("Error:").red().bold(),
                 ctx.process_timeout.expect("timeout error requires a timeout")
@@ -611,18 +671,23 @@ fn execute_shell_command(cmd: &str, working_dir: &Path, ctx: &ScriptContext) -> 
 
 /// List available scripts
 pub fn list_scripts(manifest: &RiffManifest) -> Result<i32> {
+    list_scripts_with_output(manifest, &Output::silent())
+}
+
+pub fn list_scripts_with_output(manifest: &RiffManifest, output: &Output) -> Result<i32> {
     let scripts = collect_scripts(manifest);
 
     if scripts.is_empty() {
         crate::outln!(
+            output,
             "{} No scripts defined in composer.json",
             style("Info:").cyan()
         );
         return Ok(0);
     }
 
-    crate::outln!("{}", style("Available scripts:").cyan().bold());
-    crate::outln!();
+    crate::outln!(output, "{}", style("Available scripts:").cyan().bold());
+    crate::outln!(output);
 
     // Separate custom scripts from event scripts
     let mut custom_scripts: Vec<_> = manifest.scripts.custom.keys().collect();
@@ -646,16 +711,17 @@ pub fn list_scripts(manifest: &RiffManifest) -> Result<i32> {
 
     // Print custom scripts first (these are the user-defined ones)
     if !custom_scripts.is_empty() {
-        crate::outln!("{}", style("Scripts:").white().bold());
+        crate::outln!(output, "{}", style("Scripts:").white().bold());
         for name in &custom_scripts {
             if let Some(cmds) = scripts.get(name.as_str()) {
                 // Check for description
                 let description = manifest.scripts_descriptions.get(*name);
 
                 if let Some(desc) = description {
-                    crate::outln!("  {} - {}", style(name).green(), desc);
+                    crate::outln!(output, "  {} - {}", style(name).green(), desc);
                 } else {
                     crate::outln!(
+                        output,
                         "  {} - Runs the {} script as defined in composer.json",
                         style(name).green(),
                         name
@@ -663,11 +729,11 @@ pub fn list_scripts(manifest: &RiffManifest) -> Result<i32> {
                 }
 
                 for cmd in cmds {
-                    crate::outln!("    {}", style(cmd).dim());
+                    crate::outln!(output, "    {}", style(cmd).dim());
                 }
             }
         }
-        crate::outln!();
+        crate::outln!(output);
     }
 
     // Print event scripts (if any are defined)
@@ -677,12 +743,12 @@ pub fn list_scripts(manifest: &RiffManifest) -> Result<i32> {
         .collect();
 
     if !defined_events.is_empty() {
-        crate::outln!("{}", style("Event Scripts:").white().bold());
+        crate::outln!(output, "{}", style("Event Scripts:").white().bold());
         for name in defined_events {
             if let Some(cmds) = scripts.get(name) {
-                crate::outln!("  {}", style(name).yellow());
+                crate::outln!(output, "  {}", style(name).yellow());
                 for cmd in cmds {
-                    crate::outln!("    {}", style(cmd).dim());
+                    crate::outln!(output, "    {}", style(cmd).dim());
                 }
             }
         }
@@ -751,6 +817,7 @@ mod tests {
                 dev_mode: true,
                 plugins: &plugins,
                 bin_dir: directory.path().join("vendor/bin"),
+                output: &Output::silent(),
             },
         )
         .unwrap();
@@ -783,6 +850,7 @@ mod tests {
                 dev_mode: true,
                 plugins: &plugins,
                 bin_dir: directory.path().join("vendor/bin"),
+                output: &Output::silent(),
             },
         )
         .unwrap_err();

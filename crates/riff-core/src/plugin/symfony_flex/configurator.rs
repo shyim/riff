@@ -17,6 +17,7 @@ pub(crate) struct Configurator<'a> {
     vendor_dir: PathBuf,
     installed_packages: HashSet<String>,
     force: bool,
+    output: crate::output::Output,
 }
 
 pub(crate) struct RenderedRecipe {
@@ -39,7 +40,13 @@ impl<'a> Configurator<'a> {
             vendor_dir,
             installed_packages: installed_packages.into_iter().collect(),
             force,
+            output: crate::output::Output::silent(),
         }
+    }
+
+    pub(crate) fn with_output(mut self, output: crate::output::Output) -> Self {
+        self.output = output;
+        self
     }
 
     pub(crate) fn apply(&self, recipes: &[Recipe], lock: &mut FlexLock) -> Result<()> {
@@ -48,6 +55,7 @@ impl<'a> Configurator<'a> {
         for recipe in recipes {
             if recipe.job == RecipeJob::Install && recipe.is_contrib && !allow_contrib {
                 crate::warnln!(
+                    self.output,
                     "Warning: Ignoring community recipe {} in non-interactive mode; set extra.symfony.allow-contrib to true to allow it",
                     recipe.name
                 );
@@ -59,13 +67,13 @@ impl<'a> Configurator<'a> {
             }
             match recipe.job {
                 RecipeJob::Install => {
-                    crate::outln!("  - Configuring {}", recipe_origin(recipe));
+                    crate::outln!(self.output, "  - Configuring {}", recipe_origin(recipe));
                     lock.set(recipe.name.clone(), recipe.lock.clone());
                     self.install(recipe, lock)?;
                     post_install.push(recipe);
                 }
                 RecipeJob::Uninstall => {
-                    crate::outln!("  - Unconfiguring {}", recipe_origin(recipe));
+                    crate::outln!(self.output, "  - Unconfiguring {}", recipe_origin(recipe));
                     self.uninstall(recipe, lock)?;
                     lock.remove(&recipe.name);
                 }
@@ -80,10 +88,10 @@ impl<'a> Configurator<'a> {
                 .get("post-install-output")
                 .and_then(Value::as_array)
             {
-                crate::outln!("");
-                crate::outln!("{} instructions:", recipe.name);
+                crate::outln!(self.output, "");
+                crate::outln!(self.output, "{} instructions:", recipe.name);
                 for line in lines.iter().filter_map(Value::as_str) {
-                    crate::outln!("{}", self.options.expand(line));
+                    crate::outln!(self.output, "{}", self.options.expand(line));
                 }
             }
         }

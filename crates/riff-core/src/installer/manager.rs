@@ -8,6 +8,7 @@ use futures_util::stream::{self, StreamExt};
 use crate::cache::runtime_cache_dir;
 use crate::downloader::{DownloadConfig, DownloadManager};
 use crate::http::HttpClient;
+use crate::output::Output;
 use crate::package::Package;
 use crate::plugin::manager::PackageLayouts;
 use crate::solver::{Operation, Transaction};
@@ -96,6 +97,14 @@ pub struct InstallResult {
 impl InstallationManager {
     /// Create a new installation manager
     pub fn new(http_client: Arc<HttpClient>, config: InstallConfig) -> Self {
+        Self::new_with_output(http_client, config, Output::silent())
+    }
+
+    pub fn new_with_output(
+        http_client: Arc<HttpClient>,
+        config: InstallConfig,
+        output: Output,
+    ) -> Self {
         let download_config = DownloadConfig {
             base_dir: config.base_dir.clone(),
             vendor_dir: config.vendor_dir.clone(),
@@ -104,7 +113,11 @@ impl InstallationManager {
             prefer_dist: config.prefer_dist,
         };
 
-        let download_manager = Arc::new(DownloadManager::new(http_client, download_config));
+        let download_manager = Arc::new(DownloadManager::new_with_output(
+            http_client,
+            download_config,
+            output,
+        ));
 
         let library_installer = Arc::new(LibraryInstaller::new(
             download_manager,

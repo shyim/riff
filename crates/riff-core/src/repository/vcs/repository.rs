@@ -13,6 +13,7 @@ use super::git::GitDriver;
 use super::github::GitHubDriver;
 use super::gitlab::GitLabDriver;
 use crate::config::AuthConfig;
+use crate::output::Output;
 use crate::package::{Autoload, AutoloadPath, Dist, Package, Source};
 use crate::repository::traits::{ProviderInfo, Repository, SearchMode, SearchResult};
 
@@ -92,6 +93,7 @@ pub struct VcsRepository {
     auth: Option<AuthConfig>,
     /// Mutable state
     state: Mutex<VcsRepositoryState>,
+    output: Output,
 }
 
 impl std::fmt::Debug for VcsRepository {
@@ -118,6 +120,7 @@ impl VcsRepository {
             url,
             vcs_type,
             auth: None,
+            output: Output::silent(),
             state: Mutex::new(VcsRepositoryState {
                 packages: Vec::new(),
                 loaded: false,
@@ -128,6 +131,11 @@ impl VcsRepository {
     /// Set authentication configuration
     pub fn with_auth(mut self, auth: AuthConfig) -> Self {
         self.auth = Some(auth);
+        self
+    }
+
+    pub fn with_output(mut self, output: Output) -> Self {
+        self.output = output;
         self
     }
 
@@ -387,7 +395,12 @@ impl Repository for VcsRepository {
 
     async fn find_packages(&self, name: &str) -> Vec<Arc<Package>> {
         if let Err(error) = self.load_packages() {
-            crate::warnln!("Warning: Failed to load {}: {}", self.name, error);
+            crate::warnln!(
+                self.output,
+                "Warning: Failed to load {}: {}",
+                self.name,
+                error
+            );
         }
 
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -414,7 +427,12 @@ impl Repository for VcsRepository {
 
     async fn get_packages(&self) -> Vec<Arc<Package>> {
         if let Err(error) = self.load_packages() {
-            crate::warnln!("Warning: Failed to load {}: {}", self.name, error);
+            crate::warnln!(
+                self.output,
+                "Warning: Failed to load {}: {}",
+                self.name,
+                error
+            );
         }
 
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());

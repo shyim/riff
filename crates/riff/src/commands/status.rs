@@ -116,6 +116,7 @@ pub async fn execute(args: StatusArgs, context: &CommandContext) -> Result<i32> 
                 dev_mode: true,
                 plugins: &plugins,
                 bin_dir: config.get_bin_dir(),
+                output: context.output(),
             },
         )?;
         if code != 0 {
@@ -198,23 +199,30 @@ pub async fn execute(args: StatusArgs, context: &CommandContext) -> Result<i32> 
 
     let mut exit_code = 0;
     if errors.is_empty() && unpushed_changes.is_empty() && version_changes.is_empty() {
-        riff_core::errln!("No local changes");
+        riff_core::errln!(context.output(), "No local changes");
     } else {
         if !errors.is_empty() {
             exit_code += EXIT_ERRORS;
-            riff_core::errln!("You have changes in the following dependencies:");
-            print_changes(&errors, args.verbose > 0);
+            riff_core::errln!(
+                context.output(),
+                "You have changes in the following dependencies:"
+            );
+            print_changes(&errors, args.verbose > 0, context.output());
         }
         if !unpushed_changes.is_empty() {
             exit_code += EXIT_UNPUSHED;
             riff_core::errln!(
+                context.output(),
                 "You have unpushed changes on the current branch in the following dependencies:"
             );
-            print_changes(&unpushed_changes, args.verbose > 0);
+            print_changes(&unpushed_changes, args.verbose > 0, context.output());
         }
         if !version_changes.is_empty() {
             exit_code += EXIT_VERSION_CHANGES;
-            riff_core::errln!("You have version variations in the following dependencies:");
+            riff_core::errln!(
+                context.output(),
+                "You have version variations in the following dependencies:"
+            );
             for (path, change) in &version_changes {
                 if args.verbose > 0 {
                     let mut previous = if change.previous_version.is_empty() {
@@ -231,15 +239,18 @@ pub async fn execute(args: StatusArgs, context: &CommandContext) -> Result<i32> 
                         previous.push_str(&format!(" ({})", change.previous_ref));
                         current.push_str(&format!(" ({})", change.current_ref));
                     }
-                    riff_core::outln!("{path}:");
-                    riff_core::outln!("    From {previous} to {current}");
+                    riff_core::outln!(context.output(), "{path}:");
+                    riff_core::outln!(context.output(), "    From {previous} to {current}");
                 } else {
-                    riff_core::outln!("{path}");
+                    riff_core::outln!(context.output(), "{path}");
                 }
             }
         }
         if args.verbose == 0 {
-            riff_core::errln!("Use --verbose (-v) to see a list of files");
+            riff_core::errln!(
+                context.output(),
+                "Use --verbose (-v) to see a list of files"
+            );
         }
     }
 
@@ -254,6 +265,7 @@ pub async fn execute(args: StatusArgs, context: &CommandContext) -> Result<i32> 
                 dev_mode: true,
                 plugins: &plugins,
                 bin_dir: config.get_bin_dir(),
+                output: context.output(),
             },
         )?;
         if code != 0 {
@@ -572,15 +584,15 @@ fn run_vcs(program: &str, arguments: &[&str], directory: &Path) -> Result<String
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-fn print_changes(changes: &BTreeMap<String, String>, verbose: bool) {
+fn print_changes(changes: &BTreeMap<String, String>, verbose: bool, output: &riff_core::Output) {
     for (path, detail) in changes {
         if verbose {
-            riff_core::outln!("{path}:");
+            riff_core::outln!(output, "{path}:");
             for line in detail.lines() {
-                riff_core::outln!("    {}", line.trim_start());
+                riff_core::outln!(output, "    {}", line.trim_start());
             }
         } else {
-            riff_core::outln!("{path}");
+            riff_core::outln!(output, "{path}");
         }
     }
 }

@@ -96,6 +96,7 @@ pub(crate) struct ScriptPluginContext<'a> {
     pub manifest: &'a RiffManifest,
     pub working_dir: &'a Path,
     pub runtime: &'a RuntimeContext,
+    pub output: &'a crate::output::Output,
 }
 
 pub(crate) trait ComposerCommandHook: Send + Sync {

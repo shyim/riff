@@ -18,9 +18,10 @@ pub struct FundArgs {
     pub working_dir: PathBuf,
 }
 
-pub async fn execute(args: FundArgs) -> Result<i32> {
+pub async fn execute(args: FundArgs, context: &crate::CommandContext) -> Result<i32> {
     if args.format != "text" && args.format != "json" {
         riff_core::errln!(
+            context.output(),
             "Unsupported format \"{}\". See help for supported formats: text, json",
             args.format
         );
@@ -35,13 +36,17 @@ pub async fn execute(args: FundArgs) -> Result<i32> {
     let fundings = collect_fundings(&metadata);
 
     if args.format == "json" {
-        riff_core::outln!("{}", serde_json::to_string_pretty(&fundings)?);
-    } else if fundings.is_empty() {
         riff_core::outln!(
+            context.output(),
+            "{}",
+            serde_json::to_string_pretty(&fundings)?
+        );
+    } else if fundings.is_empty() {
+        riff_core::outln!(context.output(),
             "No funding links were found in your package dependencies. This doesn't mean they don't need your support!"
         );
     } else {
-        render_text(&fundings);
+        render_text(&fundings, context);
     }
 
     Ok(0)
@@ -104,28 +109,30 @@ fn normalize_funding_url(funding: &PackageFunding, url: &str) -> String {
     url.to_string()
 }
 
-fn render_text(fundings: &FundingTree) {
+fn render_text(fundings: &FundingTree, context: &crate::CommandContext) {
     riff_core::outln!(
+        context.output(),
         "The following packages were found in your dependencies which publish funding information:"
     );
     let mut previous_packages = None;
     for (vendor, links) in fundings {
-        riff_core::outln!();
-        riff_core::outln!("{vendor}");
+        riff_core::outln!(context.output());
+        riff_core::outln!(context.output(), "{vendor}");
         for (url, packages) in links {
             let packages = format!("  {}", packages.join(", "));
             if previous_packages.as_deref() != Some(packages.as_str()) {
-                riff_core::outln!("{packages}");
+                riff_core::outln!(context.output(), "{packages}");
                 previous_packages = Some(packages);
             }
-            riff_core::outln!("    {url}");
+            riff_core::outln!(context.output(), "    {url}");
         }
     }
-    riff_core::outln!();
+    riff_core::outln!(context.output());
     riff_core::outln!(
+        context.output(),
         "Please consider following these links and sponsoring the work of package authors!"
     );
-    riff_core::outln!("Thank you!");
+    riff_core::outln!(context.output(), "Thank you!");
 }
 
 #[cfg(test)]

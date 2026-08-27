@@ -506,6 +506,7 @@ impl EventListener for ScriptEventListener {
                 dev_mode: event.dev_mode(),
                 plugins: riff.plugins(),
                 bin_dir: riff.config.get_bin_dir(),
+                output: riff.output(),
             },
         )
     }

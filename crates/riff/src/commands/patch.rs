@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use console::style;
 use riff_core::config::Config;
 use riff_core::json::{RiffLockfile, RiffManifest};
+use riff_core::output::style;
 use riff_core::patch::{
     begin_patch_edit, cleanup_patch_edit, commit_patch_edit, desired_patch_fingerprints,
     ensure_applied_patch_state_current, invalidate_applied_patch_state, native_declarations,
@@ -133,8 +133,13 @@ pub async fn execute_patch(args: PatchArgs, context: &CommandContext) -> Result<
                 }
             },
         );
-        riff_core::outln!("{} Running in dry-run mode", style("Info:").cyan());
         riff_core::outln!(
+            context.output(),
+            "{} Running in dry-run mode",
+            style("Info:").cyan()
+        );
+        riff_core::outln!(
+            context.output(),
             "{} Would create an editable snapshot for {} in {}",
             style("Info:").cyan(),
             args.package,
@@ -152,11 +157,13 @@ pub async fn execute_patch(args: PatchArgs, context: &CommandContext) -> Result<
     )?;
 
     riff_core::outln!(
+        context.output(),
         "{} Edit {}",
         style("Patch:").green().bold(),
         edit.user_dir.display()
     );
     riff_core::outln!(
+        context.output(),
         "When finished, run `riff patch-commit {}`.",
         shell_quote_path(&edit.user_dir)
     );
@@ -166,14 +173,19 @@ pub async fn execute_patch(args: PatchArgs, context: &CommandContext) -> Result<
 pub async fn execute_patch_commit(args: PatchCommitArgs, context: &CommandContext) -> Result<i32> {
     let edit = read_patch_edit(&args.edit_dir)?;
     if args.dry_run {
-        riff_core::outln!("{} Running in dry-run mode", style("Info:").cyan());
-        riff_core::outln!("{} Would generate a patch for {} and update composer.json, {} and installed package contents", style("Info:").cyan(), edit.selector, NATIVE_PATCH_LOCK_FILE);
+        riff_core::outln!(
+            context.output(),
+            "{} Running in dry-run mode",
+            style("Info:").cyan()
+        );
+        riff_core::outln!(context.output(), "{} Would generate a patch for {} and update composer.json, {} and installed package contents", style("Info:").cyan(), edit.selector, NATIVE_PATCH_LOCK_FILE);
         return Ok(0);
     }
     let project = load_project(&edit.project, context)?;
     let packages = lock_or_installed(&project);
     let result = commit_patch_edit(&args.edit_dir, &args.patches_dir, packages)?;
     riff_core::outln!(
+        context.output(),
         "{} {} {} at {}",
         style("Patch:").green().bold(),
         if result.appended {
@@ -188,12 +200,13 @@ pub async fn execute_patch_commit(args: PatchCommitArgs, context: &CommandContex
     let code = crate::install::reconcile_after_patch(project.root.clone(), context).await?;
     if code == 0 {
         if let Err(error) = cleanup_patch_edit(&args.edit_dir) {
-            riff_core::errln!(
+            riff_core::errln!(context.output(),
                 "Warning: patch was installed, but the edit snapshot could not be removed: {error:#}"
             );
         }
     } else {
         riff_core::errln!(
+            context.output(),
             "Patch files were committed, but installation failed; the edit snapshot remains at {}",
             args.edit_dir.display()
         );
@@ -212,11 +225,20 @@ pub async fn execute_patch_remove(args: PatchRemoveArgs, context: &CommandContex
         } else {
             args.patches.clone()
         };
-        riff_core::outln!("{} Running in dry-run mode", style("Info:").cyan());
+        riff_core::outln!(
+            context.output(),
+            "{} Running in dry-run mode",
+            style("Info:").cyan()
+        );
         for selector in selectors {
-            riff_core::outln!("  {} Would remove {selector}", style("-").red());
+            riff_core::outln!(
+                context.output(),
+                "  {} Would remove {selector}",
+                style("-").red()
+            );
         }
         riff_core::outln!(
+            context.output(),
             "{} composer.json, patch locks, and affected vendor packages would be updated",
             style("Info:").cyan()
         );
@@ -224,16 +246,24 @@ pub async fn execute_patch_remove(args: PatchRemoveArgs, context: &CommandContex
     }
     let result = remove_native_patches(&project.root, &args.patches, lock_or_installed(&project))?;
     for selector in &result.selectors {
-        riff_core::outln!("{} Removed {selector}", style("Patch:").green().bold());
+        riff_core::outln!(
+            context.output(),
+            "{} Removed {selector}",
+            style("Patch:").green().bold()
+        );
     }
     for path in &result.deleted_files {
-        riff_core::outln!("  - Deleted {}", path.display());
+        riff_core::outln!(context.output(), "  - Deleted {}", path.display());
     }
     for path in &result.preserved_files {
-        riff_core::outln!("  - Preserved shared file {}", path.display());
+        riff_core::outln!(
+            context.output(),
+            "  - Preserved shared file {}",
+            path.display()
+        );
     }
     for warning in &result.warnings {
-        riff_core::warnln!("Warning: {warning}");
+        riff_core::warnln!(context.output(), "Warning: {warning}");
     }
     crate::install::reconcile_after_patch(project.root, context).await
 }
@@ -246,15 +276,21 @@ pub async fn execute_patches_relock(
     let packages = lock_or_installed(&project);
     let native_count = native_declarations(&project.riff.manifest.extra)?.len();
     if args.dry_run {
-        riff_core::outln!("{} Running in dry-run mode", style("Info:").cyan());
+        riff_core::outln!(
+            context.output(),
+            "{} Running in dry-run mode",
+            style("Info:").cyan()
+        );
         if native_count > 0 || project.root.join(NATIVE_PATCH_LOCK_FILE).exists() {
             riff_core::outln!(
+                context.output(),
                 "{} {} would be regenerated",
                 style("Info:").cyan(),
                 NATIVE_PATCH_LOCK_FILE
             );
         }
         riff_core::outln!(
+            context.output(),
             "{} Composer-compatible patch locks would be regenerated without writing them",
             style("Info:").cyan()
         );
@@ -263,6 +299,7 @@ pub async fn execute_patches_relock(
     if native_count > 0 || project.root.join(NATIVE_PATCH_LOCK_FILE).exists() {
         let lock = relock_native(&project.root, &project.riff.manifest.extra, packages)?;
         riff_core::outln!(
+            context.output(),
             "{} Locked {} native patch{} in {}",
             style("Patch:").green().bold(),
             lock.patches.len(),
@@ -272,24 +309,30 @@ pub async fn execute_patches_relock(
     }
     match relock_compatibility(&project.riff, packages).await? {
         Some(result) if result.legacy => riff_core::outln!(
+            context.output(),
             "{} Validated {} legacy Composer patch{} (legacy mode has no lock file)",
             style("Patch:").green().bold(),
             result.patch_count,
             plural(result.patch_count)
         ),
         Some(result) => riff_core::outln!(
+            context.output(),
             "{} Locked {} Composer-compatible patch{} in patches.lock.json",
             style("Patch:").green().bold(),
             result.patch_count,
             plural(result.patch_count)
         ),
         None if native_count == 0 => riff_core::outln!(
+            context.output(),
             "{} No native or Composer-compatible patches are configured.",
             style("Info:").cyan()
         ),
         None => {}
     }
-    riff_core::outln!("Run `riff install` to reconcile changed patch fingerprints.");
+    riff_core::outln!(
+        context.output(),
+        "Run `riff install` to reconcile changed patch fingerprints."
+    );
     Ok(0)
 }
 
@@ -319,11 +362,20 @@ pub async fn execute_patches_repatch(
         packages
     };
     if args.dry_run {
-        riff_core::outln!("{} Running in dry-run mode", style("Info:").cyan());
+        riff_core::outln!(
+            context.output(),
+            "{} Running in dry-run mode",
+            style("Info:").cyan()
+        );
         for package in &packages {
-            riff_core::outln!("  {} Would reinstall {package}", style("~").yellow());
+            riff_core::outln!(
+                context.output(),
+                "  {} Would reinstall {package}",
+                style("~").yellow()
+            );
         }
         riff_core::outln!(
+            context.output(),
             "{} Patch state and vendor contents would be updated",
             style("Info:").cyan()
         );
@@ -331,6 +383,7 @@ pub async fn execute_patches_repatch(
     }
     invalidate_applied_patch_state(&project.vendor_dir, &packages)?;
     riff_core::outln!(
+        context.output(),
         "{} Reinstalling {} patched package{}",
         style("Patch:").green().bold(),
         packages.len(),
@@ -348,6 +401,7 @@ pub async fn execute_patches_doctor(
     let native_lock = read_native_lock(&project.root)?;
     if declarations.is_empty() {
         riff_core::outln!(
+            context.output(),
             "{} No native patch declarations",
             style("OK").green().bold()
         );
@@ -359,6 +413,7 @@ pub async fn execute_patches_doctor(
             NATIVE_PATCH_LOCK_FILE
         ))?;
         riff_core::outln!(
+            context.output(),
             "{} {} native declaration{} and {} locked entr{}",
             style("OK").green().bold(),
             declarations.len(),
@@ -374,6 +429,7 @@ pub async fn execute_patches_doctor(
     let changed = riff_core::patch::changed_patch_packages(&applied, &desired);
     if !changed.is_empty() {
         riff_core::errln!(
+            context.output(),
             "{} Installed patch state is stale for: {}",
             style("FAIL").red().bold(),
             changed.into_iter().collect::<Vec<_>>().join(", ")
@@ -385,6 +441,7 @@ pub async fn execute_patches_doctor(
         let path = project.vendor_dir.join(package);
         if !path.is_dir() {
             riff_core::errln!(
+                context.output(),
                 "{} Patched package {} is missing at {}",
                 style("FAIL").red().bold(),
                 package,
@@ -394,12 +451,14 @@ pub async fn execute_patches_doctor(
         }
     }
     riff_core::outln!(
+        context.output(),
         "{} {} installed patched package{} match the lock fingerprints",
         style("OK").green().bold(),
         desired.len(),
         plural(desired.len())
     );
     riff_core::outln!(
+        context.output(),
         "{} Pure-Rust patch engine is active",
         style("OK").green().bold()
     );
@@ -446,6 +505,7 @@ fn load_project(working_dir: &Path, context: &CommandContext) -> Result<PatchPro
         .with_lockfile(lock)
         .with_platform(context.platform().clone())
         .with_runtime(context.runtime().clone())
+        .with_output(context.output().clone())
         .build()?;
     Ok(PatchProject {
         root,

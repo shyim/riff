@@ -1,9 +1,9 @@
 //! Update command - update project dependencies.
 
 use anyhow::{Context, Result};
-use console::style;
+use riff_core::output::style;
 use std::collections::HashMap;
-use std::io::{BufRead as _, Write as _};
+use std::io::BufRead as _;
 use std::path::PathBuf;
 
 use riff_core::{
@@ -196,6 +196,7 @@ pub async fn execute(args: UpdateArgs, context: &CommandContext) -> Result<i32> 
     let json_path = working_dir.join("composer.json");
     if !json_path.exists() {
         riff_core::errln!(
+            context.output(),
             "{} No composer.json found in {}",
             style("Error:").red().bold(),
             working_dir.display()
@@ -262,6 +263,7 @@ pub async fn execute(args: UpdateArgs, context: &CommandContext) -> Result<i32> 
         .with_lockfile(lock)
         .with_platform(context.platform().clone())
         .with_runtime(context.runtime().clone())
+        .with_output(context.output().clone())
         .with_policy_environment(PolicyEnvironment::from_process())
         .plugins_enabled(!args.no_plugins)
         .dry_run(args.dry_run)
@@ -304,7 +306,7 @@ pub async fn execute(args: UpdateArgs, context: &CommandContext) -> Result<i32> 
         .await?;
     if !plugin_messages.is_empty() {
         for message in &plugin_messages {
-            riff_core::outln!("  - {message}");
+            riff_core::outln!(context.output(), "  - {message}");
         }
         if !args.dry_run {
             riff_core::json::write_json_value(&json_path, &composer.manifest, true)
@@ -389,29 +391,35 @@ pub async fn execute(args: UpdateArgs, context: &CommandContext) -> Result<i32> 
             audit_args,
             existing_lock,
             existing_installed_names,
+            context,
         )
         .await
         {
-            riff_core::warnln!("Warning: Audit failed: {}", e);
+            riff_core::warnln!(context.output(), "Warning: Audit failed: {}", e);
         }
     } else if matches!(result.as_ref(), Ok(result) if result.exit_code == 0)
         && args.dry_run
         && !skip_audit
     {
-        riff_core::outln!("{} Skipping audit in dry-run mode", style("Info:").cyan());
+        riff_core::outln!(
+            context.output(),
+            "{} Skipping audit in dry-run mode",
+            style("Info:").cyan()
+        );
     }
 
     let update_result = result?;
     let mut exit_code = update_result.exit_code;
     if exit_code == 0 && !update_lock_only && !update_result.updated_package_versions.is_empty() {
         if let Some(mode) = bump_after_update_mode.as_deref() {
-            riff_core::outln!("Bumping dependencies");
+            riff_core::outln!(context.output(), "Bumping dependencies");
             exit_code = bump_after_update(
                 &working_dir,
                 mode,
                 &update_result.updated_package_versions,
                 &update_result.updated_package_branch_aliases,
                 args.dry_run,
+                context.output(),
             )?;
         }
     }
@@ -459,8 +467,11 @@ async fn select_interactive_packages(composer: &riff_core::Riff) -> Result<Vec<S
     let mut input = stdin.lock();
     let mut selected = Vec::new();
     loop {
-        print!("Package to update (blank to finish): ");
-        std::io::stdout().flush()?;
+        composer.output().write(
+            riff_core::OutputLevel::Info,
+            riff_core::OutputStream::Stdout,
+            format_args!("Package to update (blank to finish): "),
+        );
         let mut package = String::new();
         input.read_line(&mut package)?;
         let package = package.trim();
@@ -481,8 +492,11 @@ async fn select_interactive_packages(composer: &riff_core::Riff) -> Result<Vec<S
         }
     }
 
-    print!("Continue with the selected updates? [yes/no]: ");
-    std::io::stdout().flush()?;
+    composer.output().write(
+        riff_core::OutputLevel::Info,
+        riff_core::OutputStream::Stdout,
+        format_args!("Continue with the selected updates? [yes/no]: "),
+    );
     let mut answer = String::new();
     input.read_line(&mut answer)?;
     if !matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
@@ -655,6 +669,7 @@ pub(crate) fn bump_after_update(
     updated_package_versions: &HashMap<String, String>,
     updated_package_branch_aliases: &HashMap<String, String>,
     dry_run: bool,
+    output: &riff_core::Output,
 ) -> Result<i32> {
     validate_bump_after_update_mode(mode)?;
     let manifest_path = working_dir.join("composer.json");
@@ -699,13 +714,13 @@ pub(crate) fn bump_after_update(
         }
     }
     if changes.is_empty() {
-        riff_core::outln!("{} No requirements to bump", style("Info:").cyan());
+        riff_core::outln!(output, "{} No requirements to bump", style("Info:").cyan());
         return Ok(0);
     }
     if dry_run {
-        riff_core::outln!("{} would be updated with:", manifest_path.display());
+        riff_core::outln!(output, "{} would be updated with:", manifest_path.display());
         for (section, package, constraint) in &changes {
-            riff_core::outln!(" - {section}.{package}: {constraint}");
+            riff_core::outln!(output, " - {section}.{package}: {constraint}");
         }
         return Ok(1);
     }
@@ -720,6 +735,7 @@ pub(crate) fn bump_after_update(
         std::fs::write(lock_path, lock_content)?;
     }
     riff_core::successln!(
+        output,
         "{} composer.json constraints bumped ({} changes)",
         style("Success:").green().bold(),
         changes.len()
@@ -793,6 +809,7 @@ mod tests {
             &HashMap::from([("vendor/package".to_string(), "1.2.3".to_string())]),
             &HashMap::new(),
             false,
+            &riff_core::Output::silent(),
         )
         .unwrap();
 
@@ -819,6 +836,7 @@ mod tests {
             &HashMap::from([("vendor/package".to_string(), "1.2.3".to_string())]),
             &HashMap::new(),
             true,
+            &riff_core::Output::silent(),
         )
         .unwrap();
 
@@ -845,6 +863,7 @@ mod tests {
             &HashMap::from([("vendor/package".to_string(), "dev-main".to_string())]),
             &HashMap::from([("vendor/package".to_string(), "3.3.x-dev".to_string())]),
             false,
+            &riff_core::Output::silent(),
         )
         .unwrap();
 

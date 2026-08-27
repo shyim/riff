@@ -58,6 +58,7 @@ struct PreparedPatch {
 struct PreparedPatchSet {
     patches: HashMap<String, Vec<PreparedPatch>>,
     write_legacy_report: bool,
+    output: crate::output::Output,
     // Remote patch files must remain alive until every package operation ends.
     _temporary_directory: TempDir,
 }
@@ -257,6 +258,7 @@ async fn prepare_with_options(
 
     Ok(Some(Arc::new(PreparedPatchSet {
         patches: prepared,
+        output: riff.output().clone(),
         write_legacy_report: generation == PluginGeneration::LegacyV1
             && !legacy_flag(
                 &riff.manifest.extra,
@@ -1438,7 +1440,7 @@ impl PackageInstallHook for PreparedPatchSet {
             return Ok(());
         };
 
-        crate::outln!("  - Patching {}", package.name);
+        crate::outln!(self.output, "  - Patching {}", package.name);
         for patch in patches {
             log::debug!(
                 "Applying patch '{}' ({}, sha256 {}, candidate depths {:?}) to {}",
@@ -1453,6 +1455,7 @@ impl PackageInstallHook for PreparedPatchSet {
                     return Err(error);
                 }
                 crate::errln!(
+                    self.output,
                     "Warning: Could not apply legacy patch '{}' for {} from {}; skipping it: {}",
                     patch.description,
                     package.name,
@@ -2051,6 +2054,7 @@ mod tests {
         let hook = PreparedPatchSet {
             patches: HashMap::from([("vendor/package".to_string(), vec![prepared_patch.clone()])]),
             write_legacy_report: true,
+            output: crate::output::Output::silent(),
             _temporary_directory: tempfile::tempdir_in(directory.path()).unwrap(),
         };
         hook.after_install(&package, &install_path).await.unwrap();
@@ -2061,6 +2065,7 @@ mod tests {
         let strict_hook = PreparedPatchSet {
             patches: HashMap::from([("vendor/package".to_string(), vec![strict_patch])]),
             write_legacy_report: true,
+            output: crate::output::Output::silent(),
             _temporary_directory: tempfile::tempdir_in(directory.path()).unwrap(),
         };
         assert!(strict_hook

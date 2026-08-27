@@ -15,21 +15,21 @@ pub struct ClearCacheArgs {
     pub no_cache: bool,
 }
 
-pub fn execute(args: ClearCacheArgs) -> Result<i32> {
+pub fn execute(args: ClearCacheArgs, context: &crate::CommandContext) -> Result<i32> {
     let root = runtime_cache_dir();
     if args.no_cache {
-        riff_core::outln!("Cache is not enabled: {}", root.display());
+        riff_core::outln!(context.output(), "Cache is not enabled: {}", root.display());
         return Ok(0);
     }
 
     if args.gc {
         garbage_collect(&root)?;
-        riff_core::successln!("All caches garbage-collected.");
+        riff_core::successln!(context.output(), "All caches garbage-collected.");
     } else {
         if root.is_dir() {
             Cache::new(root).clear()?;
         }
-        riff_core::successln!("All caches cleared.");
+        riff_core::successln!(context.output(), "All caches cleared.");
     }
     Ok(0)
 }

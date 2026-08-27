@@ -1,12 +1,11 @@
 use std::env;
 use std::fs;
-use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{bail, Context, Result};
-use console::style;
 use riff_core::config::ConfigLoader;
+use riff_core::output::style;
 use serde_json::{Map, Number, Value};
 
 const ROOT_STRING_PROPERTIES: &[&str] = &["name", "type", "description", "homepage", "version"];
@@ -153,7 +152,7 @@ struct ConfigFiles {
     global_home: PathBuf,
 }
 
-pub async fn execute(args: ConfigArgs) -> Result<i32> {
+pub async fn execute(args: ConfigArgs, context: &crate::CommandContext) -> Result<i32> {
     if args.global && args.file.is_some() {
         bail!("--file and --global can not be combined");
     }
@@ -183,6 +182,7 @@ pub async fn execute(args: ConfigArgs) -> Result<i32> {
         };
         if args.dry_run {
             riff_core::outln!(
+                context.output(),
                 "{} Would open {} in an editor",
                 style("Info:").cyan(),
                 path.display()
@@ -212,7 +212,10 @@ pub async fn execute(args: ConfigArgs) -> Result<i32> {
         .and_then(Value::as_bool)
         .unwrap_or(false);
     if disable_tls && args.setting_key.as_deref() != Some("disable-tls") {
-        riff_core::errln!("You are running Riff with SSL/TLS protection disabled.");
+        riff_core::errln!(
+            context.output(),
+            "You are running Riff with SSL/TLS protection disabled."
+        );
     }
 
     if args.list {
@@ -222,6 +225,7 @@ pub async fn execute(args: ConfigArgs) -> Result<i32> {
             args.source,
             &working_dir,
             &files,
+            context.output(),
         )?;
         return Ok(0);
     }
@@ -249,13 +253,16 @@ pub async fn execute(args: ConfigArgs) -> Result<i32> {
             output.push_str(&source);
             output.push(')');
         }
-        riff_core::outln!("{output}");
+        riff_core::outln!(context.output(), "{output}");
         return Ok(0);
     }
 
     if args.unset {
         if setting_key == "disable-tls" && disable_tls {
-            riff_core::errln!("You are now running Riff with SSL/TLS protection enabled.");
+            riff_core::errln!(
+                context.output(),
+                "You are now running Riff with SSL/TLS protection enabled."
+            );
         }
         unset_setting(setting_key, &mut document, &files)?;
     } else {
@@ -265,22 +272,26 @@ pub async fn execute(args: ConfigArgs) -> Result<i32> {
                 if next && !disable_tls {
                     if args.dry_run {
                         riff_core::outln!(
+                            context.output(),
                             "{} SSL/TLS protection would be disabled",
                             style("Info:").cyan()
                         );
                     } else {
                         riff_core::errln!(
+                            context.output(),
                             "You are now running Riff with SSL/TLS protection disabled."
                         );
                     }
                 } else if !next && disable_tls {
                     if args.dry_run {
                         riff_core::outln!(
+                            context.output(),
                             "{} SSL/TLS protection would be enabled",
                             style("Info:").cyan()
                         );
                     } else {
                         riff_core::errln!(
+                            context.output(),
                             "You are now running Riff with SSL/TLS protection enabled."
                         );
                     }
@@ -291,6 +302,7 @@ pub async fn execute(args: ConfigArgs) -> Result<i32> {
     }
     if args.dry_run {
         riff_core::outln!(
+            context.output(),
             "{} {} would be updated",
             style("Info:").cyan(),
             files.config_path.display()
@@ -1087,6 +1099,7 @@ fn list_configuration(
     show_source: bool,
     _working_dir: &Path,
     _files: &ConfigFiles,
+    renderer: &riff_core::Output,
 ) -> Result<()> {
     let mut output = String::new();
     if let Some(repositories) = merged.get("repositories") {
@@ -1109,11 +1122,12 @@ fn list_configuration(
             &mut output,
         );
     }
-    match io::stdout().write_all(output.as_bytes()) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
-        Err(error) => Err(error.into()),
-    }
+    renderer.write(
+        riff_core::OutputLevel::Info,
+        riff_core::OutputStream::Stdout,
+        format_args!("{output}"),
+    );
+    Ok(())
 }
 
 fn list_value(

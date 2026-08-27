@@ -1,7 +1,7 @@
 //! Show command - display package information.
 
 use anyhow::{Context, Result};
-use console::style;
+use riff_core::output::style;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -166,6 +166,7 @@ pub struct ShowArgs {
 }
 
 pub async fn execute(args: ShowArgs, context: &CommandContext) -> Result<i32> {
+    let output = context.output();
     let working_dir = args
         .working_dir
         .canonicalize()
@@ -173,6 +174,7 @@ pub async fn execute(args: ShowArgs, context: &CommandContext) -> Result<i32> {
 
     if args.format != "text" && args.format != "json" {
         riff_core::errln!(
+            output,
             "Error: Unsupported format '{}'. Use 'text' or 'json'.",
             args.format
         );
@@ -180,22 +182,28 @@ pub async fn execute(args: ShowArgs, context: &CommandContext) -> Result<i32> {
     }
 
     if args.direct && (args.all || args.available || args.platform) {
-        riff_core::errln!("Error: --direct is not usable with --all, --platform, or --available");
+        riff_core::errln!(
+            output,
+            "Error: --direct is not usable with --all, --platform, or --available"
+        );
         return Ok(1);
     }
 
     if args.tree && (args.all || args.available) {
-        riff_core::errln!("Error: --tree is not usable with --all or --available");
+        riff_core::errln!(
+            output,
+            "Error: --tree is not usable with --all or --available"
+        );
         return Ok(1);
     }
 
     if args.tree && args.latest {
-        riff_core::errln!("Error: --tree is not usable with --latest");
+        riff_core::errln!(output, "Error: --tree is not usable with --latest");
         return Ok(1);
     }
 
     if args.tree && args.path {
-        riff_core::errln!("Error: --tree is not usable with --path");
+        riff_core::errln!(output, "Error: --tree is not usable with --path");
         return Ok(1);
     }
 
@@ -204,10 +212,10 @@ pub async fn execute(args: ShowArgs, context: &CommandContext) -> Result<i32> {
     }
 
     if args.installed {
-        riff_core::warnln!("You are using the deprecated option \"installed\".");
+        riff_core::warnln!(output, "You are using the deprecated option \"installed\".");
     }
     if !args.ignore.is_empty() && !args.outdated {
-        riff_core::warnln!(
+        riff_core::warnln!(output,
             "You are using the option \"ignore\" without --outdated; it only filters outdated results."
         );
     }
@@ -231,6 +239,7 @@ pub async fn execute(args: ShowArgs, context: &CommandContext) -> Result<i32> {
     };
     if args.locked && lock.is_none() {
         riff_core::errln!(
+            output,
             "Error: A valid composer.json and composer.lock is required for --locked"
         );
         return Ok(1);
@@ -243,7 +252,11 @@ pub async fn execute(args: ShowArgs, context: &CommandContext) -> Result<i32> {
         if let Some(pattern) = &args.package {
             packages.retain(|package| wildcard_matches(pattern, &package.name));
             if packages.is_empty() && !pattern.contains('*') {
-                riff_core::errln!("Error: {}", package_not_found_message(pattern, &args));
+                riff_core::errln!(
+                    output,
+                    "Error: {}",
+                    package_not_found_message(pattern, &args)
+                );
                 return Ok(1);
             }
         }
@@ -263,12 +276,13 @@ pub async fn execute(args: ShowArgs, context: &CommandContext) -> Result<i32> {
                 })
                 .collect();
             riff_core::outln!(
+                output,
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({ "platform": rows }))?
             );
         } else {
             for package in packages {
-                riff_core::outln!("{:<30} {}", package.name, package.pretty_version());
+                riff_core::outln!(output, "{:<30} {}", package.name, package.pretty_version());
             }
         }
         return Ok(0);
@@ -317,8 +331,14 @@ pub async fn execute(args: ShowArgs, context: &CommandContext) -> Result<i32> {
         .with_lockfile(lock.clone())
         .with_platform(context.platform().clone())
         .with_runtime(context.runtime().clone())
+        .with_output(output.clone())
         .build()?;
     let repository_manager = riff.repository_manager;
+    let package_list_context = PackageListContext {
+        repository_manager: &repository_manager,
+        platform_versions: &platform_versions,
+        output,
+    };
 
     if args.all && args.package.is_none() {
         show_all_sections(
@@ -335,10 +355,15 @@ pub async fn execute(args: ShowArgs, context: &CommandContext) -> Result<i32> {
 
     if args.available {
         let displayed =
-            show_available_packages(&manifest, &working_dir, args.package.as_deref()).await?;
+            show_available_packages(&manifest, &working_dir, args.package.as_deref(), output)
+                .await?;
         if displayed == 0 {
             if let Some(package) = args.package.as_deref().filter(|name| !name.contains('*')) {
-                riff_core::errln!("Error: {}", package_not_found_message(package, &args));
+                riff_core::errln!(
+                    output,
+                    "Error: {}",
+                    package_not_found_message(package, &args)
+                );
                 return Ok(1);
             }
         }
@@ -362,24 +387,30 @@ pub async fn execute(args: ShowArgs, context: &CommandContext) -> Result<i32> {
     if args.self_package && !list_self {
         if args.name_only {
             if let Some(name) = &manifest.name {
-                riff_core::outln!("{}", name);
+                riff_core::outln!(output, "{}", name);
             }
             return Ok(0);
         }
 
         if args.package.is_some() {
-            riff_core::errln!("Error: Cannot use --self together with a package name");
+            riff_core::errln!(
+                output,
+                "Error: Cannot use --self together with a package name"
+            );
             return Ok(1);
         }
 
-        print_root_package_info(&manifest, &args.format)?;
+        print_root_package_info(&manifest, &args.format, output)?;
         return Ok(0);
     }
 
     if installed_packages.is_empty()
         && (!manifest.require.is_empty() || !manifest.require_dev.is_empty())
     {
-        riff_core::warnln!("Warning: No dependencies installed. Try running install or update.");
+        riff_core::warnln!(
+            output,
+            "Warning: No dependencies installed. Try running install or update."
+        );
     }
 
     let show_latest = args.latest || args.outdated;
@@ -390,7 +421,11 @@ pub async fn execute(args: ShowArgs, context: &CommandContext) -> Result<i32> {
                 .iter()
                 .any(|package| package.name.eq_ignore_ascii_case(package_name));
             if !is_installed {
-                riff_core::errln!("Error: {}", package_not_found_message(package_name, &args));
+                riff_core::errln!(
+                    output,
+                    "Error: {}",
+                    package_not_found_message(package_name, &args)
+                );
                 return Ok(1);
             }
             if args.direct
@@ -400,7 +435,7 @@ pub async fn execute(args: ShowArgs, context: &CommandContext) -> Result<i32> {
                     .chain(manifest.require_dev.keys())
                     .any(|name| name.eq_ignore_ascii_case(package_name))
             {
-                riff_core::errln!(
+                riff_core::errln!(output,
                     "Error: Package '{}' is installed but is not a direct dependency of the root package",
                     package_name
                 );
@@ -412,6 +447,7 @@ pub async fn execute(args: ShowArgs, context: &CommandContext) -> Result<i32> {
                 args.version.as_deref(),
                 &args,
                 &vendor_dir,
+                output,
             )?;
             1
         } else {
@@ -420,15 +456,14 @@ pub async fn execute(args: ShowArgs, context: &CommandContext) -> Result<i32> {
                 Some(package_name),
                 &manifest,
                 &args,
-                &repository_manager,
                 show_latest,
-                &platform_versions,
+                &package_list_context,
             )
             .await?
         }
     } else {
         if args.tree {
-            show_tree_all(&installed_packages, &manifest)?;
+            show_tree_all(&installed_packages, &manifest, output)?;
             installed_packages.len()
         } else {
             list_packages_with_latest(
@@ -436,9 +471,8 @@ pub async fn execute(args: ShowArgs, context: &CommandContext) -> Result<i32> {
                 None,
                 &manifest,
                 &args,
-                &repository_manager,
                 show_latest,
-                &platform_versions,
+                &package_list_context,
             )
             .await?
         }
@@ -451,7 +485,11 @@ pub async fn execute(args: ShowArgs, context: &CommandContext) -> Result<i32> {
     })
 }
 
-fn print_root_package_info(manifest: &RiffManifest, format: &str) -> Result<()> {
+fn print_root_package_info(
+    manifest: &RiffManifest,
+    format: &str,
+    output: &riff_core::Output,
+) -> Result<()> {
     if format == "json" {
         let json = serde_json::json!({
             "name": manifest.name,
@@ -462,30 +500,30 @@ fn print_root_package_info(manifest: &RiffManifest, format: &str) -> Result<()> 
             "require": manifest.require,
             "require-dev": manifest.require_dev,
         });
-        riff_core::outln!("{}", serde_json::to_string_pretty(&json)?);
+        riff_core::outln!(output, "{}", serde_json::to_string_pretty(&json)?);
     } else {
         if let Some(name) = &manifest.name {
-            riff_core::outln!("name     : {}", name);
+            riff_core::outln!(output, "name     : {}", name);
         }
         if let Some(desc) = &manifest.description {
-            riff_core::outln!("descrip. : {}", desc);
+            riff_core::outln!(output, "descrip. : {}", desc);
         }
         if let Some(version) = &manifest.version {
-            riff_core::outln!("version  : {}", version);
+            riff_core::outln!(output, "version  : {}", version);
         }
-        riff_core::outln!("type     : {}", manifest.package_type);
+        riff_core::outln!(output, "type     : {}", manifest.package_type);
 
         if !manifest.require.is_empty() {
-            riff_core::outln!("\nrequires");
+            riff_core::outln!(output, "\nrequires");
             for (name, constraint) in &manifest.require {
-                riff_core::outln!("{} {}", name, constraint);
+                riff_core::outln!(output, "{} {}", name, constraint);
             }
         }
 
         if !manifest.require_dev.is_empty() {
-            riff_core::outln!("\nrequires (dev)");
+            riff_core::outln!(output, "\nrequires (dev)");
             for (name, constraint) in &manifest.require_dev {
-                riff_core::outln!("{} {}", name, constraint);
+                riff_core::outln!(output, "{} {}", name, constraint);
             }
         }
     }
@@ -498,6 +536,7 @@ fn show_single_package(
     _version: Option<&str>,
     args: &ShowArgs,
     vendor_dir: &Path,
+    output: &riff_core::Output,
 ) -> Result<()> {
     let name_lower = name.to_lowercase();
     let package = packages
@@ -507,7 +546,7 @@ fn show_single_package(
     let package = match package {
         Some(p) => p,
         None => {
-            riff_core::errln!("Error: Package '{}' not found", name);
+            riff_core::errln!(output, "Error: Package '{}' not found", name);
             return Ok(());
         }
     };
@@ -515,15 +554,16 @@ fn show_single_package(
     if args.path {
         let install_path = vendor_dir.join(&package.name);
         if install_path.exists() {
-            riff_core::outln!("{} {}", package.name, install_path.display());
+            riff_core::outln!(output, "{} {}", package.name, install_path.display());
         } else {
-            riff_core::outln!("{} null", package.name);
+            riff_core::outln!(output, "{} null", package.name);
         }
         return Ok(());
     }
 
     if args.tree && args.format == "json" {
         riff_core::outln!(
+            output,
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "installed": [{
@@ -537,32 +577,33 @@ fn show_single_package(
     }
 
     if args.tree {
-        show_tree_single(package, packages)?;
+        show_tree_single(package, packages, output)?;
         return Ok(());
     }
 
     if args.format == "json" {
-        print_package_json(package)?;
+        print_package_json(package, output)?;
     } else {
-        print_package_info(package)?;
+        print_package_info(package, output)?;
     }
 
     Ok(())
 }
 
-fn print_package_info(package: &riff_core::Package) -> Result<()> {
-    riff_core::outln!("name     : {}", package.name);
+fn print_package_info(package: &riff_core::Package, output: &riff_core::Output) -> Result<()> {
+    riff_core::outln!(output, "name     : {}", package.name);
     if let Some(desc) = &package.description {
-        riff_core::outln!("descrip. : {}", desc);
+        riff_core::outln!(output, "descrip. : {}", desc);
     }
     riff_core::outln!(
+        output,
         "versions : {}",
         package
             .pretty_version
             .as_deref()
             .unwrap_or(&package.version)
     );
-    riff_core::outln!("type     : {}", package.package_type);
+    riff_core::outln!(output, "type     : {}", package.package_type);
 
     if let Some(abandoned) = &package.abandoned {
         let replacement = match abandoned.replacement() {
@@ -570,6 +611,7 @@ fn print_package_info(package: &riff_core::Package) -> Result<()> {
             None => "No replacement was suggested".to_string(),
         };
         riff_core::errln!(
+            output,
             "\nPackage {} is abandoned, you should avoid using it. {}.",
             package.name,
             replacement
@@ -577,44 +619,44 @@ fn print_package_info(package: &riff_core::Package) -> Result<()> {
     }
 
     if !package.require.is_empty() {
-        riff_core::outln!("\nrequires");
+        riff_core::outln!(output, "\nrequires");
         for (name, constraint) in &package.require {
-            riff_core::outln!("{} {}", name, constraint);
+            riff_core::outln!(output, "{} {}", name, constraint);
         }
     }
 
     if !package.require_dev.is_empty() {
-        riff_core::outln!("\nrequires (dev)");
+        riff_core::outln!(output, "\nrequires (dev)");
         for (name, constraint) in &package.require_dev {
-            riff_core::outln!("{} {}", name, constraint);
+            riff_core::outln!(output, "{} {}", name, constraint);
         }
     }
 
     if !package.provide.is_empty() {
-        riff_core::outln!("\nprovide");
+        riff_core::outln!(output, "\nprovide");
         for (name, constraint) in &package.provide {
-            riff_core::outln!("{} {}", name, constraint);
+            riff_core::outln!(output, "{} {}", name, constraint);
         }
     }
 
     if !package.conflict.is_empty() {
-        riff_core::outln!("\nconflict");
+        riff_core::outln!(output, "\nconflict");
         for (name, constraint) in &package.conflict {
-            riff_core::outln!("{} {}", name, constraint);
+            riff_core::outln!(output, "{} {}", name, constraint);
         }
     }
 
     if !package.replace.is_empty() {
-        riff_core::outln!("\nreplace");
+        riff_core::outln!(output, "\nreplace");
         for (name, constraint) in &package.replace {
-            riff_core::outln!("{} {}", name, constraint);
+            riff_core::outln!(output, "{} {}", name, constraint);
         }
     }
 
     Ok(())
 }
 
-fn print_package_json(package: &riff_core::Package) -> Result<()> {
+fn print_package_json(package: &riff_core::Package, output: &riff_core::Output) -> Result<()> {
     let abandoned_value = package.abandoned.as_ref().map(|a| match a.replacement() {
         Some(pkg) => serde_json::json!(pkg),
         None => serde_json::json!(true),
@@ -632,7 +674,7 @@ fn print_package_json(package: &riff_core::Package) -> Result<()> {
         "conflict": package.conflict,
         "replace": package.replace,
     });
-    riff_core::outln!("{}", serde_json::to_string_pretty(&json)?);
+    riff_core::outln!(output, "{}", serde_json::to_string_pretty(&json)?);
     Ok(())
 }
 
@@ -665,8 +707,9 @@ async fn show_available_packages(
     manifest: &RiffManifest,
     working_dir: &Path,
     filter: Option<&str>,
+    output: &riff_core::Output,
 ) -> Result<usize> {
-    let mut packages = available_packages(manifest, working_dir).await;
+    let mut packages = available_packages(manifest, working_dir, output).await;
     if let Some(filter) = filter {
         packages.retain(|package| wildcard_matches(filter, &package.name));
     }
@@ -674,9 +717,9 @@ async fn show_available_packages(
     for package in packages {
         let description = package.description.as_deref().unwrap_or_default();
         if description.is_empty() {
-            riff_core::outln!("{}", package.name);
+            riff_core::outln!(output, "{}", package.name);
         } else {
-            riff_core::outln!("{} {}", package.name, description);
+            riff_core::outln!(output, "{} {}", package.name, description);
         }
     }
     Ok(count)
@@ -685,8 +728,9 @@ async fn show_available_packages(
 async fn available_packages(
     manifest: &RiffManifest,
     working_dir: &Path,
+    output: &riff_core::Output,
 ) -> Vec<Arc<riff_core::Package>> {
-    let mut manager = RepositoryManager::new();
+    let mut manager = RepositoryManager::new().with_output(output.clone());
     for repository in manifest.repositories.as_vec() {
         manager.add_from_json_repository_at(&repository, working_dir);
     }
@@ -713,11 +757,12 @@ async fn show_all_sections(
     installed: &[Arc<riff_core::Package>],
     working_dir: &Path,
 ) -> Result<()> {
+    let output = context.output();
     let mut platform = context.packages(config)?;
     platform.sort_by(|left, right| left.name.cmp(&right.name));
-    riff_core::outln!("platform:");
+    riff_core::outln!(output, "platform:");
     for package in platform {
-        riff_core::outln!("  {} {}", package.name, package.pretty_version());
+        riff_core::outln!(output, "  {} {}", package.name, package.pretty_version());
     }
 
     if let Some(lock) = lock {
@@ -729,22 +774,22 @@ async fn show_all_sections(
             .collect();
         locked.sort_by(|left, right| left.name.cmp(&right.name));
         if !locked.is_empty() {
-            riff_core::outln!("\nlocked:");
+            riff_core::outln!(output, "\nlocked:");
             for package in locked {
-                print_section_package(&package);
+                print_section_package(&package, output);
             }
         }
     }
 
-    let available = available_packages(manifest, working_dir).await;
+    let available = available_packages(manifest, working_dir, output).await;
     if !available.is_empty() {
-        riff_core::outln!("\navailable:");
+        riff_core::outln!(output, "\navailable:");
         for package in available {
             let description = package.description.as_deref().unwrap_or_default();
             if description.is_empty() {
-                riff_core::outln!("  {}", package.name);
+                riff_core::outln!(output, "  {}", package.name);
             } else {
-                riff_core::outln!("  {} {}", package.name, description);
+                riff_core::outln!(output, "  {} {}", package.name, description);
             }
         }
     }
@@ -752,20 +797,21 @@ async fn show_all_sections(
     if !installed.is_empty() {
         let mut installed = installed.to_vec();
         installed.sort_by(|left, right| left.name.cmp(&right.name));
-        riff_core::outln!("\ninstalled:");
+        riff_core::outln!(output, "\ninstalled:");
         for package in installed {
-            print_section_package(&package);
+            print_section_package(&package, output);
         }
     }
     Ok(())
 }
 
-fn print_section_package(package: &riff_core::Package) {
+fn print_section_package(package: &riff_core::Package, output: &riff_core::Output) {
     let description = package.description.as_deref().unwrap_or_default();
     if description.is_empty() {
-        riff_core::outln!("  {} {}", package.name, package.pretty_version());
+        riff_core::outln!(output, "  {} {}", package.name, package.pretty_version());
     } else {
         riff_core::outln!(
+            output,
             "  {} {} {}",
             package.name,
             package.pretty_version(),
@@ -779,6 +825,7 @@ async fn fetch_latest_versions(
     repository_manager: &RepositoryManager,
     platform_versions: &HashMap<String, String>,
     verbose: u8,
+    output: &riff_core::Output,
 ) -> HashMap<String, String> {
     let mut latest_versions = HashMap::new();
 
@@ -801,6 +848,7 @@ async fn fetch_latest_versions(
                 format!("{} {}", pkg.name, rejected.version)
             };
             riff_core::warnln!(
+                output,
                 "Cannot use {} as it requires {} {} which is missing from your platform.",
                 subject,
                 rejected.requirement,
@@ -927,10 +975,10 @@ async fn list_packages_with_latest(
     filter: Option<&str>,
     manifest: &RiffManifest,
     args: &ShowArgs,
-    repository_manager: &RepositoryManager,
     show_latest: bool,
-    platform_versions: &HashMap<String, String>,
+    context: &PackageListContext<'_>,
 ) -> Result<usize> {
+    let output = context.output;
     let mut filtered: Vec<_> = packages
         .iter()
         .filter(|p| {
@@ -964,9 +1012,10 @@ async fn list_packages_with_latest(
     let latest_versions = if show_latest {
         fetch_latest_versions(
             &filtered,
-            repository_manager,
-            platform_versions,
+            context.repository_manager,
+            context.platform_versions,
             args.verbose,
+            output,
         )
         .await
     } else {
@@ -1066,21 +1115,24 @@ async fn list_packages_with_latest(
             })
             .collect();
         riff_core::outln!(
+            output,
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({"installed": json}))?
         );
     } else {
         if show_latest && !args.name_only {
-            riff_core::errln!("{}", style("Color legend:").green());
+            riff_core::errln!(output, "{}", style("Color legend:").green());
             riff_core::errln!(
+                output,
                 "- {} release available - update recommended",
                 style("patch or minor").red()
             );
             riff_core::errln!(
+                output,
                 "- {} release available - update possible",
                 style("major").yellow()
             );
-            riff_core::errln!();
+            riff_core::errln!(output);
 
             let direct: Vec<_> = packages_with_latest
                 .iter()
@@ -1100,28 +1152,40 @@ async fn list_packages_with_latest(
 
             if !direct.is_empty() {
                 riff_core::errln!(
+                    output,
                     "{}",
                     style("Direct dependencies required in composer.json:").green()
                 );
-                print_packages_list(&direct, args);
+                print_packages_list(&direct, args, output);
             }
 
             if !transitive.is_empty() && !args.direct {
                 if !direct.is_empty() {
-                    riff_core::outln!();
+                    riff_core::outln!(output);
                 }
                 riff_core::errln!(
+                    output,
                     "{}",
                     style("Transitive dependencies not required in composer.json:").green()
                 );
-                print_packages_list(&transitive, args);
+                print_packages_list(&transitive, args, output);
             }
         } else {
-            print_packages_list(&packages_with_latest.iter().collect::<Vec<_>>(), args);
+            print_packages_list(
+                &packages_with_latest.iter().collect::<Vec<_>>(),
+                args,
+                output,
+            );
         }
     }
 
     Ok(package_count)
+}
+
+struct PackageListContext<'a> {
+    repository_manager: &'a RepositoryManager,
+    platform_versions: &'a HashMap<String, String>,
+    output: &'a riff_core::Output,
 }
 
 fn wildcard_matches(pattern: &str, value: &str) -> bool {
@@ -1143,7 +1207,11 @@ fn terminal_link(text: &str, url: &str) -> String {
     }
 }
 
-fn print_packages_list(packages: &[&PackageWithLatest], args: &ShowArgs) {
+fn print_packages_list(
+    packages: &[&PackageWithLatest],
+    args: &ShowArgs,
+    output: &riff_core::Output,
+) {
     let name_width = packages
         .iter()
         .map(|p| p.package.name.len())
@@ -1154,7 +1222,7 @@ fn print_packages_list(packages: &[&PackageWithLatest], args: &ShowArgs) {
     for pwl in packages {
         let package = &pwl.package;
         if args.name_only {
-            riff_core::outln!("{}", package.name);
+            riff_core::outln!(output, "{}", package.name);
         } else {
             let raw_version = package
                 .pretty_version
@@ -1200,6 +1268,7 @@ fn print_packages_list(packages: &[&PackageWithLatest], args: &ShowArgs) {
                 };
 
                 riff_core::outln!(
+                    output,
                     "{}{} {:<7} {} {:<7} {}",
                     linked_name,
                     padding,
@@ -1215,6 +1284,7 @@ fn print_packages_list(packages: &[&PackageWithLatest], args: &ShowArgs) {
                     String::new()
                 };
                 riff_core::outln!(
+                    output,
                     "{}{} {:<15} {}{}",
                     linked_name,
                     padding,
@@ -1230,23 +1300,28 @@ fn print_packages_list(packages: &[&PackageWithLatest], args: &ShowArgs) {
 fn show_tree_single(
     package: &Arc<riff_core::Package>,
     all_packages: &[Arc<riff_core::Package>],
+    output: &riff_core::Output,
 ) -> Result<()> {
     let version = package
         .pretty_version
         .as_deref()
         .unwrap_or(&package.version);
     let desc = package.description.as_deref().unwrap_or("");
-    riff_core::outln!("{} {} {}", package.name, version, desc);
+    riff_core::outln!(output, "{} {} {}", package.name, version, desc);
 
     let mut visited = HashSet::new();
     visited.insert(package.name.to_lowercase());
 
-    print_dependencies_tree(&package.require, all_packages, "", &mut visited);
+    print_dependencies_tree(&package.require, all_packages, "", &mut visited, output);
 
     Ok(())
 }
 
-fn show_tree_all(packages: &[Arc<riff_core::Package>], manifest: &RiffManifest) -> Result<()> {
+fn show_tree_all(
+    packages: &[Arc<riff_core::Package>],
+    manifest: &RiffManifest,
+    output: &riff_core::Output,
+) -> Result<()> {
     let root_requires: HashSet<String> = manifest
         .require
         .keys()
@@ -1266,12 +1341,12 @@ fn show_tree_all(packages: &[Arc<riff_core::Package>], manifest: &RiffManifest) 
             .pretty_version
             .as_deref()
             .unwrap_or(&package.version);
-        riff_core::outln!("{} {}", package.name, version);
+        riff_core::outln!(output, "{} {}", package.name, version);
 
         let mut visited = HashSet::new();
         visited.insert(package.name.to_lowercase());
 
-        print_dependencies_tree(&package.require, packages, "", &mut visited);
+        print_dependencies_tree(&package.require, packages, "", &mut visited, output);
     }
 
     Ok(())
@@ -1282,6 +1357,7 @@ fn print_dependencies_tree(
     all_packages: &[Arc<riff_core::Package>],
     prefix: &str,
     visited: &mut HashSet<String>,
+    output: &riff_core::Output,
 ) {
     let mut deps: Vec<_> = requires.iter().collect();
     deps.sort_by(|a, b| a.0.cmp(b.0));
@@ -1301,6 +1377,7 @@ fn print_dependencies_tree(
 
             if visited.contains(&dep_lower) {
                 riff_core::outln!(
+                    output,
                     "{}{} {} {} (circular dependency aborted here)",
                     prefix,
                     branch,
@@ -1309,6 +1386,7 @@ fn print_dependencies_tree(
                 );
             } else {
                 riff_core::outln!(
+                    output,
                     "{}{} {} {} ({})",
                     prefix,
                     branch,
@@ -1320,12 +1398,12 @@ fn print_dependencies_tree(
                 visited.insert(dep_lower.clone());
 
                 let new_prefix = format!("{}{}   ", prefix, if is_last { " " } else { "│" });
-                print_dependencies_tree(&pkg.require, all_packages, &new_prefix, visited);
+                print_dependencies_tree(&pkg.require, all_packages, &new_prefix, visited, output);
 
                 visited.remove(&dep_lower);
             }
         } else {
-            riff_core::outln!("{}{} {} ({})", prefix, branch, dep_name, constraint);
+            riff_core::outln!(output, "{}{} {} ({})", prefix, branch, dep_name, constraint);
         }
     }
 }

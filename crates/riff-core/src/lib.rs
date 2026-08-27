@@ -41,7 +41,9 @@ pub use event::{
 };
 pub use installer::{InstallConfig, InstallationManager};
 pub use json::{RiffLockfile, RiffManifest};
-pub use output::{configure_output, OutputMode, OutputOptions};
+pub use output::{
+    AnsiMode, Output, OutputEvent, OutputLevel, OutputMode, OutputOptions, OutputSink, OutputStream,
+};
 pub use package::Package;
 pub use platform::{Platform, PlatformSnapshot};
 pub use plugin::{BinConfig, PackageOperation, PluginManager};

@@ -17,7 +17,7 @@ use anyhow::Result;
 
 pub use context::CommandContext;
 use platform::PhpPlatformDetector;
-use riff_core::Platform;
+use riff_core::{AnsiMode, Output, OutputLevel, OutputOptions, OutputStream, Platform};
 
 #[derive(Debug, usage_rs::Cli)]
 #[usage(
@@ -208,18 +208,21 @@ struct CompletionArgs {
 }
 
 pub fn run() -> i32 {
+    let mut output = Output::process(OutputOptions::default());
     // Parse first so help, version, and argument errors never pay for an async runtime.
     let raw_arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
-    let (cli, invocation) = match parse_arguments(raw_arguments) {
+    let (cli, invocation) = match parse_arguments(raw_arguments, &output) {
         Ok(parsed) => parsed,
         Err(code) => return code,
     };
     if let Some(warning) = application::configured_development_warning(&invocation) {
-        eprintln!("{warning}");
+        riff_core::errln!(output, "{warning}");
     }
-    if let Err(code) = configure_presentation(&cli) {
-        return code;
-    }
+    let options = match configure_presentation(&cli, &output) {
+        Ok(options) => options,
+        Err(code) => return code,
+    };
+    output = output.with_options(options);
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
     if let Some(command_name) = invocation.telemetry_command_name() {
         log::debug!(target: "riff::telemetry", "command={command_name}");
@@ -235,12 +238,12 @@ pub fn run() -> i32 {
     };
     match runtime.enable_all().build().and_then(|runtime| {
         runtime
-            .block_on(run_with_detected_platform(cli))
+            .block_on(run_with_detected_platform(cli, output.clone()))
             .map_err(io::Error::other)
     }) {
         Ok(code) => code,
         Err(error) => {
-            riff_core::errln!("Error: {error:#}");
+            riff_core::errln!(output, "Error: {error:#}");
             1
         }
     }
@@ -258,13 +261,16 @@ where
     T: Into<OsString>,
 {
     let raw_arguments = arguments.into_iter().map(Into::into).collect();
-    let (mut cli, invocation) = match parse_arguments(raw_arguments) {
+    let (mut cli, invocation) = match parse_arguments(raw_arguments, context.output()) {
         Ok(parsed) => parsed,
         Err(code) => return Ok(code),
     };
-    if let Err(code) = configure_presentation(&cli) {
-        return Ok(code);
-    }
+    let options = match configure_presentation(&cli, context.output()) {
+        Ok(options) => options,
+        Err(code) => return Ok(code),
+    };
+    let configured_output = context.output().clone().with_options(options);
+    context = context.with_output(configured_output);
     if let Some(php_binary) = cli.php.take() {
         context = context.with_php_binary(php_binary);
     }
@@ -276,11 +282,16 @@ where
 
 fn parse_arguments(
     raw_arguments: Vec<OsString>,
+    output: &Output,
 ) -> std::result::Result<(Cli, application::ApplicationInvocation), i32> {
     if let Some(answer) = Cli::completion_request(&raw_arguments) {
-        print!(
-            "{}",
-            commands::completion::supplement_completion(&raw_arguments, answer)
+        output.write(
+            OutputLevel::Info,
+            OutputStream::Stdout,
+            format_args!(
+                "{}",
+                commands::completion::supplement_completion(&raw_arguments, answer)
+            ),
         );
         return Err(0);
     }
@@ -299,60 +310,70 @@ fn parse_arguments(
         usage_rs::embedded::Outcome::Parsed(cli) => Ok((cli, invocation)),
         usage_rs::embedded::Outcome::Exit(exit) => {
             if exit.stderr {
-                eprint!("{}", exit.text);
+                output.write(
+                    OutputLevel::Error,
+                    OutputStream::Stderr,
+                    format_args!("{}", exit.text),
+                );
             } else {
-                print!("{}", exit.text);
+                output.write(
+                    OutputLevel::Info,
+                    OutputStream::Stdout,
+                    format_args!("{}", exit.text),
+                );
             }
             Err(exit.code)
         }
     }
 }
 
-fn configure_presentation(cli: &Cli) -> std::result::Result<(), i32> {
+fn configure_presentation(cli: &Cli, output: &Output) -> std::result::Result<OutputOptions, i32> {
     let Some(output_mode) = riff_core::OutputMode::parse(&cli.output) else {
-        eprintln!(
+        riff_core::errln!(
+            output,
             "Error: Unsupported output format '{}'. Use text or json.",
             cli.output
         );
         return Err(2);
     };
-    riff_core::configure_output(riff_core::OutputOptions {
+    Ok(OutputOptions {
         mode: output_mode,
         quiet: cli.quiet,
         progress: !cli.no_progress,
-    });
-    if cli.ansi {
-        console::set_colors_enabled(true);
-    } else if cli.no_ansi || output_mode == riff_core::OutputMode::Json {
-        console::set_colors_enabled(false);
-    }
-    Ok(())
+        ansi: if cli.ansi {
+            AnsiMode::Always
+        } else if cli.no_ansi || output_mode == riff_core::OutputMode::Json {
+            AnsiMode::Never
+        } else {
+            AnsiMode::Auto
+        },
+    })
 }
 
-async fn run_with_detected_platform(cli: Cli) -> Result<i32> {
+async fn run_with_detected_platform(cli: Cli, output: Output) -> Result<i32> {
     let detector = PhpPlatformDetector::from_sources(cli.php.clone())?;
     let platform = if cli.command.needs_platform() {
         detector.detect()?
     } else {
         Platform::empty()
     };
-    let context = CommandContext::new(detector.runtime().clone(), platform);
+    let context = CommandContext::new(detector.runtime().clone(), platform).with_output(output);
     execute_cli(cli, context).await
 }
 
 async fn execute_cli(cli: Cli, context: CommandContext) -> Result<i32> {
     let command = match cli.command {
-        Commands::About(args) => return commands::about::execute(args),
-        Commands::ClearCache(args) => return commands::clear_cache::execute(args),
-        Commands::Suggests(args) => return commands::suggests::execute(args).await,
-        Commands::Fund(args) => return commands::fund::execute(args).await,
+        Commands::About(args) => return commands::about::execute(args, &context),
+        Commands::ClearCache(args) => return commands::clear_cache::execute(args, &context),
+        Commands::Suggests(args) => return commands::suggests::execute(args, &context).await,
+        Commands::Fund(args) => return commands::fund::execute(args, &context).await,
         Commands::Recipes(args) => return commands::flex::recipes(args, &context).await,
         Commands::DumpEnv(args) => return commands::flex::dump_env(args, &context),
-        Commands::Global(args) => return commands::global::execute(args),
-        Commands::Init(args) => return commands::init::execute(args),
-        Commands::Browse(args) => return commands::home::execute(args).await,
-        Commands::Exec(args) => return commands::exec::execute(args),
-        Commands::Bump(args) => return commands::bump::execute(args),
+        Commands::Global(args) => return commands::global::execute(args, &context),
+        Commands::Init(args) => return commands::init::execute(args, &context),
+        Commands::Browse(args) => return commands::home::execute(args, &context).await,
+        Commands::Exec(args) => return commands::exec::execute(args, &context),
+        Commands::Bump(args) => return commands::bump::execute(args, &context),
         command => command,
     };
     match command {
@@ -392,16 +413,16 @@ async fn execute_cli(cli: Cli, context: CommandContext) -> Result<i32> {
         Commands::Run(args) => commands::run::execute(args, &context).await,
         Commands::Search(args) => commands::search::execute(args, &context).await,
         Commands::Show(args) => commands::show::execute(args, &context).await,
-        Commands::Licenses(args) => commands::licenses::execute(args),
-        Commands::Why(args) => commands::why::execute(args, false).await,
-        Commands::WhyNot(args) => commands::why::execute_why_not(args).await,
+        Commands::Licenses(args) => commands::licenses::execute(args, &context),
+        Commands::Why(args) => commands::why::execute(args, false, &context).await,
+        Commands::WhyNot(args) => commands::why::execute_why_not(args, &context).await,
         Commands::Outdated(args) => commands::outdated::execute(args, &context).await,
-        Commands::Audit(args) => commands::audit::execute(args).await,
-        Commands::Diagnose(args) => commands::diagnose::execute(args).await,
-        Commands::Validate(args) => commands::validate::execute(args).await,
-        Commands::Config(args) => commands::config::execute(args).await,
-        Commands::Repository(args) => commands::repository::execute(args).await,
-        Commands::Policy(args) => commands::policy::execute(args).await,
+        Commands::Audit(args) => commands::audit::execute(args, &context).await,
+        Commands::Diagnose(args) => commands::diagnose::execute(args, &context).await,
+        Commands::Validate(args) => commands::validate::execute(args, &context).await,
+        Commands::Config(args) => commands::config::execute(args, &context).await,
+        Commands::Repository(args) => commands::repository::execute(args, &context).await,
+        Commands::Policy(args) => commands::policy::execute(args, &context).await,
         Commands::Status(args) => commands::status::execute(args, &context).await,
         Commands::CheckPlatformReqs(args) => {
             commands::check_platform_reqs::execute(args, &context).await
@@ -409,13 +430,17 @@ async fn execute_cli(cli: Cli, context: CommandContext) -> Result<i32> {
         Commands::Completion(args) => {
             let shell = usage_rs::complete::Shell::from_name(&args.shell)
                 .ok_or_else(|| anyhow::anyhow!("Unsupported shell '{}'", args.shell))?;
-            print!(
-                "{}",
-                Cli::app()
-                    .name("riff")
-                    .bin("riff")
-                    .completion_app()
-                    .completion_script(shell)
+            context.output().write(
+                OutputLevel::Info,
+                OutputStream::Stdout,
+                format_args!(
+                    "{}",
+                    Cli::app()
+                        .name("riff")
+                        .bin("riff")
+                        .completion_app()
+                        .completion_script(shell)
+                ),
             );
             Ok(0)
         }
@@ -425,8 +450,18 @@ async fn execute_cli(cli: Cli, context: CommandContext) -> Result<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use riff_core::{PlatformSnapshot, RuntimeContext};
+    use riff_core::{OutputEvent, OutputSink, PlatformSnapshot, RuntimeContext};
     use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Default)]
+    struct Collector(Mutex<Vec<OutputEvent>>);
+
+    impl OutputSink for Collector {
+        fn emit(&self, event: OutputEvent) {
+            self.0.lock().unwrap().push(event);
+        }
+    }
 
     fn complete(line: &str) -> Vec<String> {
         let argv = [
@@ -476,6 +511,27 @@ mod tests {
         ];
 
         assert_eq!(run_with_args(arguments, context).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn embedded_output_is_instance_scoped_and_quiet_is_local() {
+        let visible_events = Arc::new(Collector::default());
+        let quiet_events = Arc::new(Collector::default());
+        let runtime = RuntimeContext::new(PathBuf::from("php"), PathBuf::from("riff"));
+        let visible_context = CommandContext::new(runtime.clone(), Platform::empty())
+            .with_output(Output::from_sink(visible_events.clone()));
+        let quiet_context = CommandContext::new(runtime, Platform::empty())
+            .with_output(Output::from_sink(quiet_events.clone()));
+
+        let (visible, quiet) = tokio::join!(
+            run_with_args(["about"], visible_context),
+            run_with_args(["--quiet", "about"], quiet_context),
+        );
+
+        assert_eq!(visible.unwrap(), 0);
+        assert_eq!(quiet.unwrap(), 0);
+        assert!(!visible_events.0.lock().unwrap().is_empty());
+        assert!(quiet_events.0.lock().unwrap().is_empty());
     }
 
     fn assert_contains(actual: &[String], expected: &[&str]) {

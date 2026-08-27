@@ -42,7 +42,7 @@ struct JsonDependency {
     license: Vec<String>,
 }
 
-pub fn execute(args: LicensesArgs) -> Result<i32> {
+pub fn execute(args: LicensesArgs, context: &crate::CommandContext) -> Result<i32> {
     let working_dir = args
         .working_dir
         .canonicalize()
@@ -72,9 +72,9 @@ pub fn execute(args: LicensesArgs) -> Result<i32> {
     let root_version = manifest.version.as_deref().unwrap_or("dev-main");
     let root_licenses = manifest.licenses();
     match args.format.as_str() {
-        "text" => print_text(root_name, root_version, &root_licenses, &packages),
-        "json" => print_json(root_name, root_version, root_licenses, &packages)?,
-        "summary" => print_summary(&packages),
+        "text" => print_text(root_name, root_version, &root_licenses, &packages, context),
+        "json" => print_json(root_name, root_version, root_licenses, &packages, context)?,
+        "summary" => print_summary(&packages, context),
         format => bail!(
             "Unsupported format \"{format}\". See help for supported formats: text, json, summary"
         ),
@@ -192,15 +192,26 @@ fn license_text(licenses: &[impl AsRef<str>]) -> String {
     }
 }
 
-fn print_text(root_name: &str, root_version: &str, root_licenses: &[String], packages: &[Package]) {
-    riff_core::outln!("Name: {root_name}");
-    riff_core::outln!("Version: {root_version}");
-    riff_core::outln!("Licenses: {}", license_text(root_licenses));
-    riff_core::outln!("Dependencies:");
-    riff_core::outln!();
-    riff_core::outln!("Name\tVersion\tLicenses");
+fn print_text(
+    root_name: &str,
+    root_version: &str,
+    root_licenses: &[String],
+    packages: &[Package],
+    context: &crate::CommandContext,
+) {
+    riff_core::outln!(context.output(), "Name: {root_name}");
+    riff_core::outln!(context.output(), "Version: {root_version}");
+    riff_core::outln!(
+        context.output(),
+        "Licenses: {}",
+        license_text(root_licenses)
+    );
+    riff_core::outln!(context.output(), "Dependencies:");
+    riff_core::outln!(context.output());
+    riff_core::outln!(context.output(), "Name\tVersion\tLicenses");
     for package in packages {
         riff_core::outln!(
+            context.output(),
             "{}\t{}\t{}",
             package.pretty_name(),
             pretty_version(package),
@@ -214,6 +225,7 @@ fn print_json(
     root_version: &str,
     root_licenses: Vec<String>,
     packages: &[Package],
+    context: &crate::CommandContext,
 ) -> Result<()> {
     let dependencies = packages
         .iter()
@@ -233,11 +245,15 @@ fn print_json(
         license: root_licenses,
         dependencies,
     };
-    riff_core::outln!("{}", serde_json::to_string_pretty(&report)?);
+    riff_core::outln!(
+        context.output(),
+        "{}",
+        serde_json::to_string_pretty(&report)?
+    );
     Ok(())
 }
 
-fn print_summary(packages: &[Package]) {
+fn print_summary(packages: &[Package], context: &crate::CommandContext) {
     let mut counts = HashMap::<String, usize>::new();
     for package in packages {
         if package.license.is_empty() {
@@ -252,9 +268,9 @@ fn print_summary(packages: &[Package]) {
     counts.sort_by(|(left_name, left_count), (right_name, right_count)| {
         right_count.cmp(left_count).then(left_name.cmp(right_name))
     });
-    riff_core::outln!("License\tNumber of dependencies");
+    riff_core::outln!(context.output(), "License\tNumber of dependencies");
     for (license, count) in counts {
-        riff_core::outln!("{license}\t{count}");
+        riff_core::outln!(context.output(), "{license}\t{count}");
     }
 }
 

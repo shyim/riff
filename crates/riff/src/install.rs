@@ -1,7 +1,7 @@
 //! Install command - install project dependencies.
 
 use anyhow::{Context, Result};
-use console::style;
+use riff_core::output::style;
 use std::path::PathBuf;
 
 use riff_core::{
@@ -128,23 +128,23 @@ use crate::{env::composer_env_bool, CommandContext};
 
 pub async fn execute(args: InstallArgs, context: &CommandContext) -> Result<i32> {
     if args.dev {
-        riff_core::warnln!(
+        riff_core::warnln!(context.output(),
             "You are using the deprecated option \"--dev\". It has no effect and will break in Composer 3."
         );
     }
     if args.no_suggest {
-        riff_core::warnln!(
+        riff_core::warnln!(context.output(),
             "You are using the deprecated option \"--no-suggest\". It has no effect and will break in Composer 3."
         );
     }
     if let Some(package) = args.packages.first() {
-        riff_core::errln!(
+        riff_core::errln!(context.output(),
             "Invalid argument {package}. Use \"riff require {package}\" instead to add packages to your composer.json."
         );
         return Ok(1);
     }
     if args.no_install {
-        riff_core::errln!(
+        riff_core::errln!(context.output(),
             "Invalid option \"--no-install\". Use \"riff update --no-install\" instead if you are trying to update composer.lock."
         );
         return Ok(1);
@@ -192,6 +192,7 @@ pub async fn execute(args: InstallArgs, context: &CommandContext) -> Result<i32>
         )
     } else {
         riff_core::outln!(
+            context.output(),
             "{} No composer.lock file found. Running update to generate one.",
             style("Info:").cyan()
         );
@@ -217,6 +218,7 @@ pub async fn execute(args: InstallArgs, context: &CommandContext) -> Result<i32>
             config.clone(),
             audit_lock,
             no_dev,
+            context.output().clone(),
         )))
     } else {
         None
@@ -229,6 +231,7 @@ pub async fn execute(args: InstallArgs, context: &CommandContext) -> Result<i32>
         .with_lockfile(lock)
         .with_platform(context.platform().clone())
         .with_runtime(context.runtime().clone())
+        .with_output(context.output().clone())
         .with_policy_environment(PolicyEnvironment::from_process())
         .plugins_enabled(!args.no_plugins)
         .dry_run(args.dry_run)
@@ -303,18 +306,25 @@ pub async fn execute(args: InstallArgs, context: &CommandContext) -> Result<i32>
         let audit_result = match audit_prefetch {
             Some(audit_prefetch) => match audit_prefetch.await {
                 Ok(Ok(prefetched)) => {
-                    crate::commands::audit::render_prefetched_install(prefetched, audit_args).await
+                    crate::commands::audit::render_prefetched_install(
+                        prefetched, audit_args, context,
+                    )
+                    .await
                 }
                 Ok(Err(error)) => Err(error),
                 Err(error) => Err(anyhow::Error::new(error)),
             },
-            None => crate::commands::audit::execute(audit_args).await,
+            None => crate::commands::audit::execute(audit_args, context).await,
         };
         if let Err(error) = audit_result {
-            riff_core::warnln!("Warning: Audit failed: {error}");
+            riff_core::warnln!(context.output(), "Warning: Audit failed: {error}");
         }
     } else if matches!(result.as_ref(), Ok(&0)) && args.dry_run && !skip_audit {
-        riff_core::outln!("{} Skipping audit in dry-run mode", style("Info:").cyan());
+        riff_core::outln!(
+            context.output(),
+            "{} Skipping audit in dry-run mode",
+            style("Info:").cyan()
+        );
     } else if let Some(audit_prefetch) = audit_prefetch {
         audit_prefetch.abort();
     }
