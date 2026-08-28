@@ -316,11 +316,18 @@ impl<'a> Configurator<'a> {
             .as_object_mut()
             .context("composer.json scripts must be an object")?;
         let target = if auto {
-            scripts
+            let auto_scripts = scripts
                 .entry("auto-scripts")
-                .or_insert_with(|| Value::Object(Map::new()))
+                .or_insert_with(|| Value::Object(Map::new()));
+            if auto_scripts.as_array().is_some_and(Vec::is_empty) {
+                if remove {
+                    return Ok(());
+                }
+                *auto_scripts = Value::Object(Map::new());
+            }
+            auto_scripts
                 .as_object_mut()
-                .context("scripts.auto-scripts must be an object")?
+                .context("scripts.auto-scripts must be an object or empty array")?
         } else {
             scripts
         };
@@ -914,9 +921,14 @@ fn safe_join(root: &Path, relative: &str) -> Result<PathBuf> {
 }
 
 fn object<'a>(value: &'a Value, name: &str) -> Result<&'a Map<String, Value>> {
-    value
-        .as_object()
-        .with_context(|| format!("{name} recipe configuration must be an object"))
+    if let Some(object) = value.as_object() {
+        return Ok(object);
+    }
+    if value.as_array().is_some_and(Vec::is_empty) {
+        static EMPTY_OBJECT: std::sync::OnceLock<Map<String, Value>> = std::sync::OnceLock::new();
+        return Ok(EMPTY_OBJECT.get_or_init(Map::new));
+    }
+    bail!("{name} recipe configuration must be an object or empty array")
 }
 
 fn string<'a>(value: &'a Value, name: &str) -> Result<&'a str> {
@@ -1256,7 +1268,14 @@ fn quote_env(value: &str) -> String {
 }
 
 fn render_yaml_value(value: &Value, level: usize) -> Result<String> {
-    if let Some(value) = value.as_str() {
+    let scalar = match value {
+        Value::String(value) => Some(value.clone()),
+        Value::Bool(true) => Some("1".to_owned()),
+        Value::Bool(false) | Value::Null => Some(String::new()),
+        Value::Number(value) => Some(value.to_string()),
+        Value::Array(_) | Value::Object(_) => None,
+    };
+    if let Some(value) = scalar {
         return Ok(format!(" '{}'", value.replace('\'', "''")));
     }
     let yaml: serde_yaml::Value = serde_json::from_value(value.clone())?;
@@ -1288,6 +1307,95 @@ fn package_version(version: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_configurator(project: &Path) -> Configurator<'_> {
+        Configurator::new(
+            project,
+            &crate::json::RiffManifest::default(),
+            project.join("vendor"),
+            Vec::new(),
+            false,
+        )
+    }
+
+    #[test]
+    fn composer_scripts_accept_an_empty_auto_scripts_array() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(
+            project.path().join("composer.json"),
+            r#"{"scripts":{"auto-scripts":[]}}"#,
+        )
+        .unwrap();
+
+        test_configurator(project.path())
+            .configure_composer_scripts(
+                &serde_json::json!({"cache:clear": "symfony-cmd"}),
+                false,
+                true,
+            )
+            .unwrap();
+
+        let composer: Value =
+            serde_json::from_slice(&std::fs::read(project.path().join("composer.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            composer.pointer("/scripts/auto-scripts/cache:clear"),
+            Some(&Value::String("symfony-cmd".to_owned()))
+        );
+    }
+
+    #[test]
+    fn composer_scripts_reject_a_non_empty_auto_scripts_array() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(
+            project.path().join("composer.json"),
+            r#"{"scripts":{"auto-scripts":["cache:clear"]}}"#,
+        )
+        .unwrap();
+
+        let error = test_configurator(project.path())
+            .configure_composer_scripts(
+                &serde_json::json!({"cache:warmup": "symfony-cmd"}),
+                false,
+                true,
+            )
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("scripts.auto-scripts must be an object or empty array"));
+    }
+
+    #[test]
+    fn empty_recipe_arrays_are_valid_empty_objects() {
+        assert!(object(&serde_json::json!([]), "composer scripts")
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn non_empty_recipe_arrays_are_not_objects() {
+        let error = object(&serde_json::json!(["cache:clear"]), "composer scripts").unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("composer scripts recipe configuration must be an object or empty array"));
+    }
+
+    #[test]
+    fn container_scalars_match_flex_string_coercion() {
+        assert_eq!(
+            render_yaml_value(&serde_json::json!(true), 1).unwrap(),
+            " '1'"
+        );
+        assert_eq!(
+            render_yaml_value(&serde_json::json!(false), 1).unwrap(),
+            " ''"
+        );
+        assert_eq!(
+            render_yaml_value(&serde_json::json!(42), 1).unwrap(),
+            " '42'"
+        );
+        assert_eq!(render_yaml_value(&Value::Null, 1).unwrap(), " ''");
+    }
 
     #[test]
     fn rejects_recipe_paths_outside_project() {
