@@ -55,6 +55,22 @@ It creates a draft GitHub release with generated notes, uploads the eight
 archives and checksum manifest, and publishes the release only when all jobs
 succeed. Stable releases become the latest release. Prerelease versions do not.
 
+After a stable release is published, the **Publish Homebrew formula** workflow
+downloads the four macOS and Linux GNU archives, computes their checksums, and
+updates `Formula/php-riff.rb` in `shyim/homebrew-tap`. Prereleases are
+intentionally excluded from the stable formula.
+
+The workflow uses Octo STS to exchange GitHub's OIDC identity for a short-lived
+token with **Contents: write** access to `shyim/homebrew-tap`; it does not use a
+PAT or repository secret. Install the Octo STS GitHub App with access to the tap
+and copy `packaging/homebrew/riff-homebrew.sts.yaml` to
+`.github/chainguard/riff-homebrew.sts.yaml` in the tap. The policy binds access
+to this repository's immutable numeric IDs, the Homebrew workflow path, and
+either `main` or stable version tags.
+
+To publish an existing stable release or retry a failed tap update, run the
+workflow manually from `main` with its immutable version tag.
+
 If an automation credential creates the tag but GitHub does not dispatch its
 push workflow, run **Release** manually with `ref` set to the version tag,
 `label` set to the same tag, and `release` enabled. The workflow applies the

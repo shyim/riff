@@ -11,6 +11,19 @@ Riff itself is a native executable. Static commands such as `validate`,
 `config`, and `status` can operate without launching PHP unless a configured
 project script invokes `@php`.
 
+## Install with Homebrew
+
+Homebrew core's `riff` formula belongs to an unrelated project. Use the fully
+qualified Riff formula so Homebrew selects the Composer-compatible package
+manager:
+
+```sh
+brew install shyim/tap/php-riff
+```
+
+It installs the command as `riff`, declares PHP as a runtime dependency, and
+generates shell completions during installation.
+
 ## Install a release binary
 
 Download the archive for your operating system and architecture from

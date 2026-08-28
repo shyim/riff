@@ -1,0 +1,159 @@
+name: Publish Homebrew formula
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing stable release tag to publish, for example v0.0.4
+        required: true
+        type: string
+
+concurrency:
+  group: publish-homebrew
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  publish:
+    name: Publish php-riff formula
+    if: ${{ github.event_name == 'workflow_dispatch' || !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TAP_REPOSITORY: shyim/homebrew-tap
+    steps:
+      - name: Resolve stable release
+        id: release
+        shell: bash
+        env:
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          tag=${EVENT_TAG:-$INPUT_TAG}
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tag '$tag' must match vMAJOR.MINOR.PATCH"
+            exit 1
+          fi
+
+          release=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease)
+          if [ "$(jq -r .isDraft <<<"$release")" != "false" ]; then
+            echo "::error::Release $tag is still a draft"
+            exit 1
+          fi
+          if [ "$(jq -r .isPrerelease <<<"$release")" != "false" ]; then
+            echo "::error::Prereleases are not published as the stable Homebrew formula"
+            exit 1
+          fi
+
+          status=$(gh api "repos/${GITHUB_REPOSITORY}/compare/main...${tag}" --jq .status 2>/dev/null || echo missing)
+          if [ "$status" != "identical" ] && [ "$status" != "behind" ]; then
+            echo "::error::Tag $tag is not reachable from main (compare status: $status)"
+            exit 1
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download release archives
+        id: assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist
+          targets=(
+            aarch64-apple-darwin
+            x86_64-apple-darwin
+            aarch64-unknown-linux-gnu
+            x86_64-unknown-linux-gnu
+          )
+          for target in "${targets[@]}"; do
+            asset="riff-${TAG}-${target}.tar.gz"
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$asset" --dir dist
+            test -f "dist/$asset"
+          done
+
+          count=$(find dist -maxdepth 1 -type f -name '*.tar.gz' | wc -l)
+          if [ "$count" -ne 4 ]; then
+            echo "::error::Expected four Homebrew release archives, found $count"
+            exit 1
+          fi
+
+          {
+            echo "macos_arm64=$(sha256sum "dist/riff-${TAG}-aarch64-apple-darwin.tar.gz" | cut -d ' ' -f 1)"
+            echo "macos_x86_64=$(sha256sum "dist/riff-${TAG}-x86_64-apple-darwin.tar.gz" | cut -d ' ' -f 1)"
+            echo "linux_arm64=$(sha256sum "dist/riff-${TAG}-aarch64-unknown-linux-gnu.tar.gz" | cut -d ' ' -f 1)"
+            echo "linux_x86_64=$(sha256sum "dist/riff-${TAG}-x86_64-unknown-linux-gnu.tar.gz" | cut -d ' ' -f 1)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Render and validate formula
+        shell: bash
+        env:
+          LINUX_ARM64_SHA256: ${{ steps.assets.outputs.linux_arm64 }}
+          LINUX_X86_64_SHA256: ${{ steps.assets.outputs.linux_x86_64 }}
+          MACOS_ARM64_SHA256: ${{ steps.assets.outputs.macos_arm64 }}
+          MACOS_X86_64_SHA256: ${{ steps.assets.outputs.macos_x86_64 }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          ./packaging/homebrew/render-formula.sh > dist/php-riff.rb
+          ruby -c dist/php-riff.rb
+
+      - name: Mint short-lived tap token
+        id: tap-token
+        uses: octo-sts/action@6177b4481c00308b3839969c3eca88c96a91775f # v1.0.0
+        with:
+          scope: shyim/homebrew-tap
+          identity: riff-homebrew
+
+      - name: Check tap write access
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.tap-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          can_push=$(gh api "repos/${TAP_REPOSITORY}" --jq '.permissions.push // false' 2>/dev/null || echo api-error)
+          if [ "$can_push" != "true" ]; then
+            echo "::error::Octo STS did not grant Contents write access to ${TAP_REPOSITORY}"
+            exit 1
+          fi
+
+      - name: Publish formula to tap
+        shell: bash
+        env:
+          TAP_TOKEN: ${{ steps.tap-token.outputs.token }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/${TAP_REPOSITORY}.git" tap
+          mkdir -p tap/Formula
+          cp dist/php-riff.rb tap/Formula/php-riff.rb
+
+          cd tap
+          if [ -z "$(git status --porcelain -- Formula/php-riff.rb)" ]; then
+            echo "Formula/php-riff.rb already matches Riff $VERSION"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/php-riff.rb
+          git commit -m "php-riff: update to ${VERSION}"
+          git push

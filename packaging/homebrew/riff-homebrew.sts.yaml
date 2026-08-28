@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/octo-sts/app/refs/heads/main/pkg/octosts/octosts.TrustPolicy.json
+
+# Install this policy in shyim/homebrew-tap at:
+# .github/chainguard/riff-homebrew.sts.yaml
+issuer: https://token.actions.githubusercontent.com
+subject_pattern: '^repo:shyim@6224096/riff@1345154926:ref:refs/(heads/main|tags/v[0-9]+\.[0-9]+\.[0-9]+)$'
+
+claim_pattern:
+  repository_id: '^1345154926$'
+  repository_owner_id: '^6224096$'
+  workflow_ref: '^shyim/riff/.github/workflows/publish-homebrew\.yml@refs/(heads/main|tags/v[0-9]+\.[0-9]+\.[0-9]+)$'
+  event_name: '^(release|workflow_dispatch)$'
+
+permissions:
+  contents: write

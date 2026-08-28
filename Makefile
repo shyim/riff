@@ -2,13 +2,16 @@ PHP_BIN ?= $(shell command -v php 2>/dev/null)
 COMPOSER_SRC_DIR ?= $(CURDIR)/shopware/composer
 RIFF_BIN ?= $(CURDIR)/target/debug/riff
 
-.PHONY: build release fmt clippy test test-core test-cli test-composer test-composer-case composer-test-check composer-test-inventories composer-test-inventory composer-test-pending composer-php-test-inventory composer-php-test-pending composer-php-test-delegated composer-php-test-case composer-php-test-group composer-functional-test-inventory composer-functional-test-pending composer-functional-test-case check composer-reference parity
+.PHONY: build release fmt clippy test test-core test-cli test-composer test-composer-case composer-test-check composer-test-inventories composer-test-inventory composer-test-pending composer-php-test-inventory composer-php-test-pending composer-php-test-delegated composer-php-test-case composer-php-test-group composer-functional-test-inventory composer-functional-test-pending composer-functional-test-case homebrew-formula-check check composer-reference parity
 
 build:
 	@cargo build --workspace
 
 release:
 	@cargo build --release --workspace --locked
+
+homebrew-formula-check:
+	@./packaging/homebrew/test-render-formula.sh
 
 fmt:
 	@cargo fmt --all --check
@@ -82,7 +85,7 @@ composer-functional-test-case:
 	@test -n "$(CASE)" || { echo "Usage: make composer-functional-test-case CASE=create-project-command.test" >&2; exit 1; }
 	@./scripts/composer-functional-test-inventory.sh --run "$(CASE)"
 
-check: fmt clippy test release
+check: fmt clippy test release homebrew-formula-check
 
 composer-reference: build
 	@test -f "$(COMPOSER_SRC_DIR)/bin/composer" || { echo "Missing Composer checkout at $(COMPOSER_SRC_DIR)" >&2; exit 1; }

@@ -48,6 +48,18 @@ runs used empty, isolated caches, so package ZIP archives were downloaded; warm
 runs reused only the archive cache populated by the final cold run. Results
 will vary by machine and network conditions.
 
+## Install with Homebrew
+
+Homebrew core already uses the name `riff` for an unrelated tool, so install
+Riff's namespaced `php-riff` formula from the official tap:
+
+```sh
+brew install shyim/tap/php-riff
+```
+
+The formula installs the executable as `riff` and generates Bash, Zsh, and
+Fish completions. PHP is installed as a Homebrew dependency.
+
 ## Install a release binary
 
 Prebuilt binaries are available from
