@@ -122,15 +122,16 @@ jobs:
           scope: shyim/homebrew-tap
           identity: riff-homebrew
 
-      - name: Check tap write access
+      - name: Verify tap installation access
         shell: bash
         env:
           GH_TOKEN: ${{ steps.tap-token.outputs.token }}
         run: |
           set -euo pipefail
-          can_push=$(gh api "repos/${TAP_REPOSITORY}" --jq '.permissions.push // false' 2>/dev/null || echo api-error)
-          if [ "$can_push" != "true" ]; then
-            echo "::error::Octo STS did not grant Contents write access to ${TAP_REPOSITORY}"
+
+          if ! gh api installation/repositories --paginate \
+            --jq '.repositories[].full_name' | grep -Fxq "$TAP_REPOSITORY"; then
+            echo "::error::The Octo STS installation does not include ${TAP_REPOSITORY}"
             exit 1
           fi
 
