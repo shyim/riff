@@ -1,0 +1,59 @@
+name: php-riff
+arch: ${NFPM_ARCH}
+platform: linux
+version: ${VERSION}
+release: "1"
+section: utils
+priority: optional
+maintainer: Riff contributors <shyim@users.noreply.github.com>
+description: Fast, standalone Composer-compatible package manager
+vendor: Riff contributors
+homepage: https://github.com/shyim/riff
+license: MIT
+
+recommends:
+  - git
+
+contents:
+  - src: package-root/usr/bin/riff
+    dst: /usr/bin/riff
+    file_info:
+      mode: 0755
+
+  - src: package-root/usr/share/bash-completion/completions/riff
+    dst: /usr/share/bash-completion/completions/riff
+    file_info:
+      mode: 0644
+
+  - src: package-root/usr/share/zsh/site-functions/_riff
+    dst: /usr/share/zsh/site-functions/_riff
+    file_info:
+      mode: 0644
+
+  - src: package-root/usr/share/fish/vendor_completions.d/riff.fish
+    dst: /usr/share/fish/vendor_completions.d/riff.fish
+    file_info:
+      mode: 0644
+
+  - src: LICENSE
+    dst: /usr/share/doc/php-riff/copyright
+    packager: deb
+    file_info:
+      mode: 0644
+
+  - src: LICENSE
+    dst: /usr/share/licenses/php-riff/LICENSE
+    packager: rpm
+    file_info:
+      mode: 0644
+
+overrides:
+  deb:
+    depends:
+      - php-cli (>= 7.2.5)
+  rpm:
+    depends:
+      - php-cli >= 7.2.5
+
+rpm:
+  buildhost: github.com/shyim/riff

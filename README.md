@@ -60,6 +60,24 @@ brew install shyim/tap/php-riff
 The formula installs the executable as `riff` and generates Bash, Zsh, and
 Fish completions. PHP is installed as a Homebrew dependency.
 
+## Install a Linux package
+
+GitHub Releases include native `php-riff` packages for Debian-compatible and
+RPM-based distributions on x86-64 and ARM64. Download the package matching
+your system, then install it with the distribution package manager:
+
+```sh
+# Debian or Ubuntu (use arm64 instead of amd64 on ARM64)
+sudo apt install ./php-riff_*_amd64.deb
+
+# Fedora, Rocky Linux, or another RPM distribution (use aarch64 on ARM64)
+sudo dnf install ./php-riff-*.x86_64.rpm
+```
+
+The packages install the executable as `riff`, include Bash, Zsh, and Fish
+completions, and depend on PHP CLI 7.2.5 or newer. Git is a recommended package
+for source installs and VCS-aware commands.
+
 ## Install a release binary
 
 Prebuilt binaries are available from

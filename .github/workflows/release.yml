@@ -313,12 +313,205 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  publish:
-    name: Publish release
+  package:
+    name: Package (${{ matrix.nfpm-arch }})
     needs: [validate, quality, prepare-release, build]
     if: >-
       ${{ always() && needs.validate.result == 'success' && needs.quality.result == 'success' &&
           needs.build.result == 'success' &&
+          (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            nfpm-arch: amd64
+            deb-arch: amd64
+            rpm-arch: x86_64
+          - target: aarch64-unknown-linux-gnu
+            nfpm-arch: arm64
+            deb-arch: arm64
+            rpm-arch: aarch64
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      DEBIAN_SMOKE_IMAGE: docker.io/library/debian@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
+      NFPM_ARCH: ${{ matrix.nfpm-arch }}
+      NFPM_IMAGE: ghcr.io/goreleaser/nfpm@sha256:a662cb167d7b6d3a83920c83d76b12d02b8ac5dd2c13e5c62c15270b23f6df0c
+      RPM_SMOKE_IMAGE: docker.io/library/rockylinux@sha256:305de618a5681ff75b1d608fd22b10f362867dff2f550a4f1d427d21cd7f42b4
+      TARGET: ${{ matrix.target }}
+      VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate.outputs.checkout-ref }}
+          persist-credentials: false
+      - name: Download target binary
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-${{ matrix.target }}
+          path: dist
+      - name: Download host binary for completion generation
+        if: matrix.nfpm-arch != 'amd64'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-x86_64-unknown-linux-gnu
+          path: host-dist
+      - name: Prepare package root
+        shell: bash
+        env:
+          LABEL: ${{ needs.validate.outputs.label }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p \
+            package-root/usr/bin \
+            package-root/usr/share/bash-completion/completions \
+            package-root/usr/share/fish/vendor_completions.d \
+            package-root/usr/share/zsh/site-functions
+          tar -xzf "dist/riff-${LABEL}-${TARGET}.tar.gz" -C package-root/usr/bin
+          chmod 0755 package-root/usr/bin/riff
+
+          completion_binary=package-root/usr/bin/riff
+          if [ "$NFPM_ARCH" != amd64 ]; then
+            mkdir -p host-bin
+            tar -xzf "host-dist/riff-${LABEL}-x86_64-unknown-linux-gnu.tar.gz" -C host-bin
+            completion_binary=host-bin/riff
+          fi
+
+          "$completion_binary" completion bash > package-root/usr/share/bash-completion/completions/riff
+          "$completion_binary" completion zsh > package-root/usr/share/zsh/site-functions/_riff
+          "$completion_binary" completion fish > package-root/usr/share/fish/vendor_completions.d/riff.fish
+          chmod 0644 \
+            package-root/usr/share/bash-completion/completions/riff \
+            package-root/usr/share/fish/vendor_completions.d/riff.fish \
+            package-root/usr/share/zsh/site-functions/_riff
+      - name: Build deb and rpm packages
+        shell: bash
+        env:
+          DEB_ARCH: ${{ matrix.deb-arch }}
+          RPM_ARCH: ${{ matrix.rpm-arch }}
+        run: |
+          set -euo pipefail
+
+          export SOURCE_DATE_EPOCH
+          SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)
+          deb_package="php-riff_${VERSION}-1_${DEB_ARCH}.deb"
+          rpm_package="php-riff-${VERSION}-1.${RPM_ARCH}.rpm"
+
+          for package in \
+            "deb:$deb_package" \
+            "rpm:$rpm_package"
+          do
+            packager=${package%%:*}
+            target=${package#*:}
+            docker run --rm \
+              --user "$(id -u):$(id -g)" \
+              --env NFPM_ARCH \
+              --env SOURCE_DATE_EPOCH \
+              --env VERSION \
+              --volume "$PWD:/workspace" \
+              --workdir /workspace \
+              "$NFPM_IMAGE" package \
+              --config packaging/nfpm/nfpm.yaml \
+              --packager "$packager" \
+              --target "dist/$target"
+          done
+
+          test -f "dist/$deb_package"
+          test -f "dist/$rpm_package"
+      - name: Validate package metadata and contents
+        shell: bash
+        env:
+          DEB_ARCH: ${{ matrix.deb-arch }}
+          RPM_ARCH: ${{ matrix.rpm-arch }}
+        run: |
+          set -euo pipefail
+
+          deb_package="php-riff_${VERSION}-1_${DEB_ARCH}.deb"
+          rpm_package="php-riff-${VERSION}-1.${RPM_ARCH}.rpm"
+          expected_package_version="${VERSION/-/~}-1"
+
+          test "$(dpkg-deb --field "dist/$deb_package" Package)" = php-riff
+          test "$(dpkg-deb --field "dist/$deb_package" Version)" = "$expected_package_version"
+          test "$(dpkg-deb --field "dist/$deb_package" Architecture)" = "$DEB_ARCH"
+          dpkg-deb --field "dist/$deb_package" Depends | grep -F 'php-cli (>= 7.2.5)'
+          dpkg-deb --field "dist/$deb_package" Recommends | grep -Fx git
+          dpkg-deb --contents "dist/$deb_package" | grep -F './usr/bin/riff'
+          dpkg-deb --contents "dist/$deb_package" | grep -F './usr/share/bash-completion/completions/riff'
+
+          mapfile -t rpm_fields < <(
+            docker run --rm \
+              --volume "$PWD/dist:/packages:ro" \
+              "$RPM_SMOKE_IMAGE" \
+              rpm -qp --queryformat '%{NAME}\n%{VERSION}-%{RELEASE}\n%{ARCH}\n' "/packages/$rpm_package"
+          )
+          test "${rpm_fields[0]}" = php-riff
+          test "${rpm_fields[1]}" = "$expected_package_version"
+          test "${rpm_fields[2]}" = "$RPM_ARCH"
+          docker run --rm \
+            --volume "$PWD/dist:/packages:ro" \
+            "$RPM_SMOKE_IMAGE" \
+            rpm -qp --requires "/packages/$rpm_package" | grep -F 'php-cli >= 7.2.5'
+          docker run --rm \
+            --volume "$PWD/dist:/packages:ro" \
+            "$RPM_SMOKE_IMAGE" \
+            rpm -qp --recommends "/packages/$rpm_package" | grep -Fx git
+          docker run --rm \
+            --volume "$PWD/dist:/packages:ro" \
+            "$RPM_SMOKE_IMAGE" \
+            rpm -qlp "/packages/$rpm_package" | grep -F '/usr/bin/riff'
+      - name: Smoke-test package installation
+        if: matrix.nfpm-arch == 'amd64'
+        shell: bash
+        env:
+          DEB_PACKAGE: php-riff_${{ needs.validate.outputs.version }}-1_${{ matrix.deb-arch }}.deb
+          RPM_PACKAGE: php-riff-${{ needs.validate.outputs.version }}-1.${{ matrix.rpm-arch }}.rpm
+        run: |
+          set -euo pipefail
+
+          docker run --rm \
+            --env DEB_PACKAGE \
+            --env VERSION \
+            --volume "$PWD/dist:/packages:ro" \
+            "$DEBIAN_SMOKE_IMAGE" \
+            sh -euc '
+              apt-get update >/dev/null
+              apt-get install --yes --no-install-recommends "/packages/$DEB_PACKAGE" >/dev/null
+              riff --version | grep -F "$VERSION"
+              test -f /usr/share/bash-completion/completions/riff
+              test -f /usr/share/doc/php-riff/copyright
+            '
+
+          docker run --rm \
+            --env RPM_PACKAGE \
+            --env VERSION \
+            --volume "$PWD/dist:/packages:ro" \
+            "$RPM_SMOKE_IMAGE" \
+            sh -euc '
+              microdnf install --assumeyes php-cli >/dev/null
+              rpm --install "/packages/$RPM_PACKAGE"
+              riff --version | grep -F "$VERSION"
+              test -f /usr/share/zsh/site-functions/_riff
+              test -f /usr/share/licenses/php-riff/LICENSE
+            '
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-packages-${{ matrix.nfpm-arch }}
+          path: |
+            dist/*.deb
+            dist/*.rpm
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish release
+    needs: [validate, quality, prepare-release, build, package]
+    if: >-
+      ${{ always() && needs.validate.result == 'success' && needs.quality.result == 'success' &&
+          needs.build.result == 'success' && needs.package.result == 'success' &&
           (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -357,15 +550,31 @@ jobs:
             test -f "dist/riff-${LABEL}-${target}.${extension}"
           done
 
+          packages=(
+            "php-riff_${{ needs.validate.outputs.version }}-1_amd64.deb"
+            "php-riff_${{ needs.validate.outputs.version }}-1_arm64.deb"
+            "php-riff-${{ needs.validate.outputs.version }}-1.x86_64.rpm"
+            "php-riff-${{ needs.validate.outputs.version }}-1.aarch64.rpm"
+          )
+          for package in "${packages[@]}"; do
+            test -f "dist/$package"
+          done
+
           count=$(find dist -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) | wc -l)
           if [ "$count" -ne 8 ]; then
             echo "::error::Expected 8 release archives, found $count"
             exit 1
           fi
 
+          package_count=$(find dist -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) | wc -l)
+          if [ "$package_count" -ne 4 ]; then
+            echo "::error::Expected 4 Linux packages, found $package_count"
+            exit 1
+          fi
+
           (
             cd dist
-            sha256sum ./*.tar.gz ./*.zip | sort -k2 > SHA256SUMS
+            sha256sum ./*.deb ./*.rpm ./*.tar.gz ./*.zip | sort -k2 > SHA256SUMS
           )
           cat dist/SHA256SUMS
       - name: Attest release bundle
@@ -375,6 +584,8 @@ jobs:
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
+            dist/*.deb
+            dist/*.rpm
             dist/*.tar.gz
             dist/*.zip
             dist/SHA256SUMS
