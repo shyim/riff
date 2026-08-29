@@ -85,5 +85,14 @@ urlencoding = "2"
 chrono = { version = "0.4", features = ["serde"] }
 
 [dev-dependencies]
+criterion = { version = "5", package = "codspeed-criterion-compat" }
 proptest = "1"
 tokio-test = "0.4"
+
+[[bench]]
+name = "solver"
+harness = false
+
+[[bench]]
+name = "manifest"
+harness = false
