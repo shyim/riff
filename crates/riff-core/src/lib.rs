@@ -23,6 +23,7 @@ pub mod repository;
 pub mod riff;
 pub mod runtime;
 pub mod scripts;
+pub mod session;
 pub mod solver;
 pub mod url_utils;
 pub mod util;
@@ -50,6 +51,9 @@ pub use plugin::{BinConfig, PackageOperation, PluginManager};
 pub use repository::{Repository, RepositoryManager};
 pub use riff::{Riff, RiffBuilder};
 pub use runtime::RuntimeContext;
+pub use session::{
+    BatchOptions, ProjectInstallRequest, ProjectInstallResult, RiffSession, RiffSessionBuilder,
+};
 pub use solver::{Policy, Pool, Request, Solver, Transaction};
 pub use util::{compute_content_hash, is_platform_package};
 

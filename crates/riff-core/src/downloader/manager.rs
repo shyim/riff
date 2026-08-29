@@ -1,7 +1,8 @@
 //! Download manager for orchestrating package downloads.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Weak};
 
 use crate::cache::runtime_cache_dir;
 use crate::http::HttpClient;
@@ -72,7 +73,7 @@ pub struct DownloadManager {
     file_downloader: FileDownloader,
     git_downloader: GitDownloader,
     path_downloader: PathDownloader,
-    extraction_semaphore: tokio::sync::Semaphore,
+    shared: SharedDownloadResources,
     config: DownloadConfig,
     preferences: Vec<(String, DownloadPreference)>,
     source_fallback: bool,
@@ -80,6 +81,48 @@ pub struct DownloadManager {
 }
 
 const MAX_CONCURRENT_EXTRACTIONS: usize = 10;
+
+/// Synchronization and resource limits shared by download managers in one session.
+#[derive(Clone)]
+pub(crate) struct SharedDownloadResources {
+    artifact_locks: Arc<Mutex<HashMap<PathBuf, Weak<tokio::sync::Mutex<()>>>>>,
+    download_semaphore: Arc<tokio::sync::Semaphore>,
+    extraction_semaphore: Arc<tokio::sync::Semaphore>,
+}
+
+impl SharedDownloadResources {
+    pub(crate) fn new(max_downloads: usize, max_extractions: usize) -> Self {
+        Self {
+            artifact_locks: Arc::new(Mutex::new(HashMap::new())),
+            download_semaphore: Arc::new(tokio::sync::Semaphore::new(max_downloads.max(1))),
+            extraction_semaphore: Arc::new(tokio::sync::Semaphore::new(max_extractions.max(1))),
+        }
+    }
+
+    async fn lock_artifact(&self, path: &Path) -> tokio::sync::OwnedMutexGuard<()> {
+        let lock = {
+            let mut locks = self
+                .artifact_locks
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            locks.retain(|_, lock| lock.strong_count() > 0);
+            if let Some(lock) = locks.get(path).and_then(Weak::upgrade) {
+                lock
+            } else {
+                let lock = Arc::new(tokio::sync::Mutex::new(()));
+                locks.insert(path.to_path_buf(), Arc::downgrade(&lock));
+                lock
+            }
+        };
+        lock.lock_owned().await
+    }
+}
+
+impl Default for SharedDownloadResources {
+    fn default() -> Self {
+        Self::new(64, MAX_CONCURRENT_EXTRACTIONS)
+    }
+}
 
 impl DownloadManager {
     /// Create a new download manager
@@ -92,11 +135,25 @@ impl DownloadManager {
         config: DownloadConfig,
         output: Output,
     ) -> Self {
+        Self::new_with_output_and_resources(
+            http_client,
+            config,
+            output,
+            SharedDownloadResources::default(),
+        )
+    }
+
+    pub(crate) fn new_with_output_and_resources(
+        http_client: Arc<HttpClient>,
+        config: DownloadConfig,
+        output: Output,
+        shared: SharedDownloadResources,
+    ) -> Self {
         Self {
             file_downloader: FileDownloader::new(http_client),
             git_downloader: GitDownloader::new(),
             path_downloader: PathDownloader::new(),
-            extraction_semaphore: tokio::sync::Semaphore::new(MAX_CONCURRENT_EXTRACTIONS),
+            shared,
             config,
             preferences: Vec::new(),
             source_fallback: false,
@@ -379,6 +436,7 @@ impl DownloadManager {
         if let Some(parent) = cache_file.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
+        let _artifact_guard = self.shared.lock_artifact(&cache_file).await;
         let checksum = dist
             .sha256
             .as_ref()
@@ -400,6 +458,15 @@ impl DownloadManager {
 
         for url in dist.urls() {
             let url = process_dist_url(&url, dist.reference.as_deref());
+            let _download_permit =
+                self.shared
+                    .download_semaphore
+                    .acquire()
+                    .await
+                    .map_err(|error| RiffError::DownloadFailed {
+                        package: package.name.clone(),
+                        reason: format!("Download scheduler failed: {error}"),
+                    })?;
             if let Err(error) = self
                 .file_downloader
                 .download(&url, &cache_file, None::<fn(u64, u64)>)
@@ -439,76 +506,9 @@ impl DownloadManager {
         dist: &Dist,
         dest_dir: &Path,
     ) -> Result<bool> {
-        let cache_file = self.cache_path(package, &dist.dist_type);
-        if let Some(parent) = cache_file.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-
-        // Try URLs in order (primary + mirrors)
-        let urls = dist.urls();
-
-        let checksum = dist
-            .sha256
-            .as_ref()
-            .filter(|s| !s.is_empty())
-            .or_else(|| dist.shasum.as_ref().filter(|s| !s.is_empty()));
-
-        for url in &urls {
-            let url = process_dist_url(url, dist.reference.as_deref());
-            if cache_file.exists() {
-                // Verify checksum if available
-                if let Some(checksum) = checksum {
-                    let checksum_type = ChecksumType::from_hex_length(checksum.len())
-                        .unwrap_or(ChecksumType::Sha256);
-
-                    if verify_checksum(&cache_file, checksum, checksum_type).await? {
-                        self.extract_archive(&cache_file, dest_dir).await?;
-                        return Ok(true);
-                    }
-                    let _ = tokio::fs::remove_file(&cache_file).await;
-                } else {
-                    self.extract_archive(&cache_file, dest_dir).await?;
-                    return Ok(true);
-                }
-            }
-
-            let result = self
-                .file_downloader
-                .download(&url, &cache_file, None::<fn(u64, u64)>)
-                .await;
-
-            if let Err(e) = result {
-                crate::warnln!(
-                    self.output,
-                    "Warning: Failed to download from {}: {}",
-                    url,
-                    e
-                );
-                continue;
-            }
-
-            // Verify checksum if available
-            if let Some(checksum) = checksum {
-                let checksum_type =
-                    ChecksumType::from_hex_length(checksum.len()).unwrap_or(ChecksumType::Sha256);
-
-                if !verify_checksum(&cache_file, checksum, checksum_type).await? {
-                    let _ = tokio::fs::remove_file(&cache_file).await;
-                    return Err(RiffError::ChecksumMismatch {
-                        package: package.name.clone(),
-                    });
-                }
-            }
-
-            // Extract the archive
-            self.extract_archive(&cache_file, dest_dir).await?;
-            return Ok(false);
-        }
-
-        Err(RiffError::DownloadFailed {
-            package: package.name.clone(),
-            reason: "All download URLs failed".to_string(),
-        })
+        let (cache_file, from_cache) = self.cache_dist_archive(package, dist).await?;
+        self.extract_archive(&cache_file, dest_dir).await?;
+        Ok(from_cache)
     }
 
     /// Download from source (git)
@@ -628,9 +628,16 @@ impl DownloadManager {
 
     /// Extract an archive to destination
     async fn extract_archive(&self, archive_path: &Path, dest_dir: &Path) -> Result<()> {
-        let _permit = self.extraction_semaphore.acquire().await.map_err(|error| {
-            RiffError::InstallationFailed(format!("Archive extraction scheduler failed: {error}"))
-        })?;
+        let _permit = self
+            .shared
+            .extraction_semaphore
+            .acquire()
+            .await
+            .map_err(|error| {
+                RiffError::InstallationFailed(format!(
+                    "Archive extraction scheduler failed: {error}"
+                ))
+            })?;
         let archive_path = archive_path.to_path_buf();
         let dest_dir = dest_dir.to_path_buf();
 
@@ -1265,6 +1272,44 @@ mod tests {
         let second = manager.download(&package).await.unwrap();
         assert!(second.from_cache);
         assert_eq!(fs::read(second.path.join("dist.txt")).unwrap(), b"dist");
+    }
+
+    #[tokio::test]
+    async fn shared_resources_download_once_and_extract_into_two_vendor_trees() {
+        let directory = TempDir::new().unwrap();
+        let (url, server) = serve_once("200 OK", zip_bytes("dist.txt", b"dist"));
+        let client = Arc::new(HttpClient::new().unwrap());
+        let shared = SharedDownloadResources::default();
+        let manager = |vendor_dir| {
+            DownloadManager::new_with_output_and_resources(
+                Arc::clone(&client),
+                DownloadConfig {
+                    base_dir: directory.path().to_path_buf(),
+                    cache_dir: directory.path().join("cache"),
+                    vendor_dir: directory.path().join(vendor_dir),
+                    prefer_source: false,
+                    prefer_dist: true,
+                },
+                Output::silent(),
+                shared.clone(),
+            )
+        };
+        let from = manager("vendor-from");
+        let to = manager("vendor-to");
+        let mut package = Package::new("vendor/package", "1.0.0");
+        package.dist = Some(Dist::zip(url));
+
+        let (from_result, to_result) = tokio::join!(from.download(&package), to.download(&package));
+        let from_result = from_result.unwrap();
+        let to_result = to_result.unwrap();
+        server.join().unwrap();
+
+        assert_ne!(from_result.from_cache, to_result.from_cache);
+        assert_eq!(
+            fs::read(from_result.path.join("dist.txt")).unwrap(),
+            b"dist"
+        );
+        assert_eq!(fs::read(to_result.path.join("dist.txt")).unwrap(), b"dist");
     }
 
     async fn assert_dist_to_source_fallback() {

@@ -1,8 +1,7 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::cache::runtime_cache_dir;
 use crate::config::{Config, PreferredInstall};
 use crate::event::EventDispatcher;
 use crate::http::HttpClient;
@@ -12,8 +11,9 @@ use crate::json::{Repositories, Repository as JsonRepository, RiffLockfile, Riff
 use crate::output::Output;
 use crate::plugin::PluginManager;
 use crate::policy_config::{PackagePolicyConfig, PolicyEnvironment};
-use crate::repository::{ComposerRepository, Repository, RepositoryManager};
+use crate::repository::{Repository, RepositoryManager};
 use crate::runtime::RuntimeContext;
+use crate::session::{RiffSession, RiffSessionBuilder};
 use crate::Platform;
 
 /// The central Riff application object.
@@ -30,6 +30,7 @@ pub struct Riff {
     pub runtime: RuntimeContext,
     pub package_policy: PackagePolicyConfig,
     pub output: Output,
+    pub(crate) session: RiffSession,
     plugin_manager: PluginManager,
 }
 
@@ -83,6 +84,7 @@ pub struct RiffBuilder {
     http_client: Option<Arc<HttpClient>>,
     repository_manager: Option<RepositoryManager>,
     additional_repositories: Vec<Arc<dyn Repository>>,
+    session: Option<RiffSession>,
 
     // Installation options (override config)
     prefer_source: Option<bool>,
@@ -117,6 +119,7 @@ impl RiffBuilder {
             http_client: None,
             repository_manager: None,
             additional_repositories: Vec::new(),
+            session: None,
             prefer_source: None,
             prefer_dist: None,
             dry_run: false,
@@ -150,6 +153,12 @@ impl RiffBuilder {
 
     pub fn with_http_client(mut self, http_client: Arc<HttpClient>) -> Self {
         self.http_client = Some(http_client);
+        self
+    }
+
+    /// Use resources shared with other projects created from the same session.
+    pub fn with_session(mut self, session: RiffSession) -> Self {
+        self.session = Some(session);
         self
     }
 
@@ -271,20 +280,33 @@ impl RiffBuilder {
             &self.policy_environment,
         )?;
 
-        let http_client = match self.http_client.take() {
-            Some(client) => client,
-            None => Arc::new(HttpClient::new().context("Failed to create HTTP client")?),
+        let session = match (self.session.take(), self.http_client.take()) {
+            (Some(session), None) => session,
+            (Some(_), Some(_)) => {
+                anyhow::bail!(
+                    "with_http_client(...) cannot be combined with a shared Riff session; configure the client on RiffSessionBuilder"
+                )
+            }
+            (None, http_client) => {
+                let mut builder = RiffSessionBuilder::new();
+                if let Some(http_client) = http_client {
+                    builder = builder.with_http_client(http_client);
+                }
+                builder.build()?
+            }
         };
+        let http_client = session.http_client();
 
-        let repository_manager = self.build_repository_manager(&manifest)?;
-        let install_config = self.build_install_config(&config);
+        let repository_manager = self.build_repository_manager(&manifest, &session)?;
+        let install_config = self.build_install_config(&config, &session);
         let plugin_manager =
             PluginManager::builtins(self.plugins_enabled, config.allow_plugins.clone())?;
 
-        let installation_manager = Arc::new(InstallationManager::new_with_output(
+        let installation_manager = Arc::new(InstallationManager::new_with_output_and_resources(
             http_client.clone(),
             install_config,
             self.output.clone(),
+            session.download_resources(),
         ));
 
         // Create event dispatcher with script listeners and plugins
@@ -304,11 +326,16 @@ impl RiffBuilder {
             runtime: self.runtime,
             package_policy,
             output: self.output,
+            session,
             plugin_manager,
         })
     }
 
-    fn build_repository_manager(&mut self, manifest: &RiffManifest) -> Result<RepositoryManager> {
+    fn build_repository_manager(
+        &mut self,
+        manifest: &RiffManifest,
+        session: &RiffSession,
+    ) -> Result<RepositoryManager> {
         if let Some(manager) = self.repository_manager.take() {
             return Ok(manager.with_output(self.output.clone()));
         }
@@ -319,7 +346,11 @@ impl RiffBuilder {
             if repository_is_pear(&repo) {
                 anyhow::bail!("The PEAR repository has been removed from Composer 2.x");
             }
-            repository_manager.add_from_json_repository_at(&repo, &self.working_dir);
+            repository_manager.add_from_json_repository_at_in_session(
+                &repo,
+                &self.working_dir,
+                session,
+            );
         }
 
         for repo in &self.additional_repositories {
@@ -331,14 +362,13 @@ impl RiffBuilder {
             .unwrap_or_else(|| is_packagist_disabled(&manifest.repositories));
 
         if !packagist_disabled {
-            let packagist = ComposerRepository::packagist_with_cache(runtime_cache_dir());
-            repository_manager.add_repository(Arc::new(packagist));
+            repository_manager.add_repository(session.packagist_repository());
         }
 
         Ok(repository_manager)
     }
 
-    fn build_install_config(&self, config: &Config) -> InstallConfig {
+    fn build_install_config(&self, config: &Config, session: &RiffSession) -> InstallConfig {
         let (prefer_source, prefer_dist) = match (self.prefer_source, self.prefer_dist) {
             (Some(src), Some(dst)) => (src, dst),
             (Some(src), None) => (src, !src),
@@ -356,7 +386,7 @@ impl RiffBuilder {
             vendor_dir: self.working_dir.join(&config.vendor_dir),
             bin_dir: self.working_dir.join(&config.bin_dir),
             bin_compat: config.bin_compat.clone(),
-            cache_dir: runtime_cache_dir(),
+            cache_dir: session.cache_dir().to_path_buf(),
             prefer_source,
             prefer_dist,
             dry_run: self.dry_run,
@@ -378,6 +408,7 @@ impl Clone for RiffBuilder {
             http_client: self.http_client.clone(),
             repository_manager: None, // RepositoryManager doesn't implement Clone
             additional_repositories: self.additional_repositories.clone(),
+            session: self.session.clone(),
             prefer_source: self.prefer_source,
             prefer_dist: self.prefer_dist,
             dry_run: self.dry_run,
@@ -432,6 +463,7 @@ fn is_packagist_disabled(repositories: &Repositories) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cache::runtime_cache_dir;
     use indexmap::IndexMap;
 
     fn create_minimal_manifest() -> RiffManifest {

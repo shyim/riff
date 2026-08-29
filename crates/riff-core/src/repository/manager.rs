@@ -14,6 +14,7 @@ use super::PlatformRepository;
 use crate::cache::runtime_cache_dir;
 use crate::output::Output;
 use crate::package::Package;
+use crate::session::RiffSession;
 use riff_semver::VersionParser;
 
 /// Manages multiple repositories with priority ordering
@@ -430,6 +431,24 @@ impl RepositoryManager {
         repo: &crate::json::Repository,
         base_dir: impl AsRef<std::path::Path>,
     ) {
+        self.add_from_json_repository_at_inner(repo, base_dir.as_ref(), None);
+    }
+
+    pub(crate) fn add_from_json_repository_at_in_session(
+        &mut self,
+        repo: &crate::json::Repository,
+        base_dir: impl AsRef<std::path::Path>,
+        session: &RiffSession,
+    ) {
+        self.add_from_json_repository_at_inner(repo, base_dir.as_ref(), Some(session));
+    }
+
+    fn add_from_json_repository_at_inner(
+        &mut self,
+        repo: &crate::json::Repository,
+        base_dir: &std::path::Path,
+        session: Option<&RiffSession>,
+    ) {
         use crate::json::Repository as JsonRepo;
 
         let result: Option<Arc<dyn Repository>> = match repo {
@@ -440,7 +459,7 @@ impl RepositoryManager {
                 exclude,
             } => {
                 let mut nested = RepositoryManager::new();
-                nested.add_from_json_repository_at(repository, base_dir.as_ref());
+                nested.add_from_json_repository_at_inner(repository, base_dir, session);
                 nested.repositories.pop().map(|repository| {
                     Arc::new(FilterRepository::new(
                         repository,
@@ -452,9 +471,14 @@ impl RepositoryManager {
             }
             JsonRepo::Composer { url, filter, .. } => {
                 let name = extract_repo_name(url);
-                let mut repository = ComposerRepository::with_cache(name, url, runtime_cache_dir());
-                repository.set_user_filter_config(filter.clone());
-                Some(Arc::new(repository))
+                if let Some(session) = session {
+                    Some(session.composer_repository(name, url, filter) as Arc<dyn Repository>)
+                } else {
+                    let mut repository =
+                        ComposerRepository::with_cache(name, url, runtime_cache_dir());
+                    repository.set_user_filter_config(filter.clone());
+                    Some(Arc::new(repository))
+                }
             }
             JsonRepo::Path { url, options } => {
                 let path_options = PathRepositoryOptions {

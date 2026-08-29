@@ -296,6 +296,19 @@ impl ComposerRepository {
         repo
     }
 
+    /// Create a Composer repository backed by a shared HTTP connection pool.
+    pub(crate) fn with_cache_and_client(
+        name: impl Into<String>,
+        url: impl Into<String>,
+        cache_dir: PathBuf,
+        client: reqwest::Client,
+    ) -> Self {
+        let mut repo = Self::new(name, url);
+        repo.client = client;
+        repo.set_cache_dir(cache_dir);
+        repo
+    }
+
     /// Create Packagist.org repository
     pub fn packagist() -> Self {
         Self::new("packagist.org", "https://repo.packagist.org")

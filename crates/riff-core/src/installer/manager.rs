@@ -6,7 +6,7 @@ use std::sync::Arc;
 use futures_util::stream::{self, StreamExt};
 
 use crate::cache::runtime_cache_dir;
-use crate::downloader::{DownloadConfig, DownloadManager};
+use crate::downloader::{DownloadConfig, DownloadManager, SharedDownloadResources};
 use crate::http::HttpClient;
 use crate::output::Output;
 use crate::package::Package;
@@ -105,6 +105,20 @@ impl InstallationManager {
         config: InstallConfig,
         output: Output,
     ) -> Self {
+        Self::new_with_output_and_resources(
+            http_client,
+            config,
+            output,
+            SharedDownloadResources::default(),
+        )
+    }
+
+    pub(crate) fn new_with_output_and_resources(
+        http_client: Arc<HttpClient>,
+        config: InstallConfig,
+        output: Output,
+        shared: SharedDownloadResources,
+    ) -> Self {
         let download_config = DownloadConfig {
             base_dir: config.base_dir.clone(),
             vendor_dir: config.vendor_dir.clone(),
@@ -113,10 +127,11 @@ impl InstallationManager {
             prefer_dist: config.prefer_dist,
         };
 
-        let download_manager = Arc::new(DownloadManager::new_with_output(
+        let download_manager = Arc::new(DownloadManager::new_with_output_and_resources(
             http_client,
             download_config,
             output,
+            shared,
         ));
 
         let library_installer = Arc::new(LibraryInstaller::new(

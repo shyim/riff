@@ -18,6 +18,7 @@ pub use git::{
     strip_url_credentials, GitAuthentication, GitDownloader, GitProcess, GitProcessCommand,
     GitProcessOutput, GitRemoteExecutor, SystemGitProcess,
 };
+pub(crate) use manager::SharedDownloadResources;
 pub use manager::{DownloadConfig, DownloadManager, DownloadResult};
 pub use path::{PathDownloader, PathInstallResult, PathStrategy};
 pub use vcs::{
