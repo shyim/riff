@@ -516,6 +516,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
+      actions: write
       contents: write
       id-token: write
       attestations: write
@@ -623,3 +624,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.validate.outputs.label }}
         run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+      - name: Publish stable release to Homebrew
+        if: >-
+          ${{ needs.validate.outputs.is-release == 'true' &&
+              needs.validate.outputs.prerelease != 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.label }}
+        run: >-
+          gh workflow run publish-homebrew.yml --repo "$GITHUB_REPOSITORY"
+          --ref main --field tag="$TAG"
