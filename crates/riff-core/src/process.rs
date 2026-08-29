@@ -1,5 +1,6 @@
-//! Process execution primitives used by Riff's script runner.
+//! Process execution primitives shared by Riff and its native plugins.
 
+use crate::output::{Output, OutputLevel, OutputStream};
 use regex::{Captures, Regex};
 use std::io::{self, Read};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -99,6 +100,54 @@ impl ProcessExecutor {
         Ok(RunningProcess {
             child: Some(command.spawn()?),
         })
+    }
+}
+
+/// Executes a child process using Riff's instance-scoped output policy.
+///
+/// Process-rendered text output is inherited so interactive commands retain
+/// terminal behavior. Library sinks, silent output, and JSON output are
+/// captured and replayed as structured Riff events instead.
+#[derive(Debug, Clone, Copy)]
+pub struct ProcessRunner<'a> {
+    output: &'a Output,
+    timeout: Option<Duration>,
+}
+
+impl<'a> ProcessRunner<'a> {
+    pub fn new(output: &'a Output) -> Self {
+        Self {
+            output,
+            timeout: None,
+        }
+    }
+
+    pub fn with_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    /// Configure a Composer-compatible timeout, where zero disables it.
+    pub fn with_timeout_seconds(self, timeout: u64) -> Self {
+        self.with_timeout((timeout > 0).then(|| Duration::from_secs(timeout)))
+    }
+
+    pub fn timeout(&self) -> Option<Duration> {
+        self.timeout
+    }
+
+    pub fn execute(&self, command: &mut Command) -> Result<ProcessOutput, ProcessError> {
+        let output_mode = if self.output.captures_process_output() {
+            OutputMode::Capture
+        } else {
+            OutputMode::Inherit
+        };
+        let process_output = ProcessExecutor::new(self.timeout).execute(command, output_mode)?;
+        if output_mode == OutputMode::Capture {
+            replay_process_output(self.output, OutputStream::Stdout, &process_output.stdout);
+            replay_process_output(self.output, OutputStream::Stderr, &process_output.stderr);
+        }
+        Ok(process_output)
     }
 }
 
@@ -212,6 +261,28 @@ fn join_reader(reader: Option<JoinHandle<io::Result<Vec<u8>>>>) -> Result<Vec<u8
     }
 }
 
+fn replay_process_output(output: &Output, stream: OutputStream, bytes: &[u8]) {
+    let contents = String::from_utf8_lossy(bytes);
+    let level = if stream == OutputStream::Stderr {
+        OutputLevel::Error
+    } else {
+        OutputLevel::Info
+    };
+    for line in contents.split_inclusive('\n') {
+        let newline = line.ends_with('\n');
+        let message = line
+            .strip_suffix('\n')
+            .unwrap_or(line)
+            .strip_suffix('\r')
+            .unwrap_or_else(|| line.strip_suffix('\n').unwrap_or(line));
+        if newline {
+            output.emit(level, stream, format_args!("{message}"));
+        } else if !message.is_empty() {
+            output.write(level, stream, format_args!("{message}"));
+        }
+    }
+}
+
 fn sanitize_username(username: &str) -> String {
     if username.len() >= 12 {
         format!("{}***", username.chars().take(3).collect::<String>())
@@ -296,7 +367,20 @@ fn escape_windows_double_quotes(argument: &str) -> (String, bool) {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use crate::output::{OutputEvent, OutputSink};
+
     use super::*;
+
+    #[derive(Default)]
+    struct Collector(Mutex<Vec<OutputEvent>>);
+
+    impl OutputSink for Collector {
+        fn emit(&self, event: OutputEvent) {
+            self.0.lock().unwrap().push(event);
+        }
+    }
 
     #[cfg(unix)]
     #[test]
@@ -320,6 +404,55 @@ mod tests {
             .unwrap();
         assert_eq!(output.exit_code(), 1);
         assert_eq!(output.stderr, b"missing file");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn process_runner_replays_captured_output_to_the_instance_sink() {
+        let collector = Arc::new(Collector::default());
+        let output = Output::from_sink(collector.clone());
+        let mut command = Command::new("sh");
+        command.args(["-c", "printf 'out\\n'; printf 'err' >&2; exit 7"]);
+
+        let process_output = ProcessRunner::new(&output).execute(&mut command).unwrap();
+
+        assert_eq!(process_output.exit_code(), 7);
+        assert_eq!(process_output.stdout, b"out\n");
+        assert_eq!(process_output.stderr, b"err");
+        assert_eq!(
+            *collector.0.lock().unwrap(),
+            [
+                OutputEvent {
+                    level: OutputLevel::Info,
+                    stream: OutputStream::Stdout,
+                    message: "out".to_owned(),
+                    newline: true,
+                },
+                OutputEvent {
+                    level: OutputLevel::Error,
+                    stream: OutputStream::Stderr,
+                    message: "err".to_owned(),
+                    newline: false,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn process_runner_uses_composer_timeout_semantics() {
+        let output = Output::silent();
+        assert_eq!(
+            ProcessRunner::new(&output)
+                .with_timeout_seconds(0)
+                .timeout(),
+            None
+        );
+        assert_eq!(
+            ProcessRunner::new(&output)
+                .with_timeout_seconds(5)
+                .timeout(),
+            Some(Duration::from_secs(5))
+        );
     }
 
     #[cfg(unix)]

@@ -4,7 +4,7 @@ use std::process::Command;
 use anyhow::{bail, Context, Result};
 use riff_core::config::Config;
 use riff_core::json::{RiffLockfile, RiffManifest};
-use riff_core::{Riff, RiffBuilder};
+use riff_core::{ProcessRunner, Riff, RiffBuilder};
 use serde_json::Value;
 
 use crate::CommandContext;
@@ -327,7 +327,8 @@ file_put_contents($path.'.local.php', $contents, LOCK_EX);
     } else {
         working_dir.join(root)
     };
-    let status = Command::new(&context.runtime().php_binary)
+    let mut command = context.runtime().php_command();
+    command
         .arg("-r")
         .arg(php)
         .env("RIFF_DUMP_ROOT", &root)
@@ -339,11 +340,13 @@ file_put_contents($path.'.local.php', $contents, LOCK_EX);
             "RIFF_VENDOR_AUTOLOAD",
             config.get_vendor_dir().join("autoload.php"),
         )
-        .current_dir(&working_dir)
-        .status()
+        .current_dir(&working_dir);
+    let process_output = ProcessRunner::new(context.output())
+        .with_timeout_seconds(config.process_timeout)
+        .execute(&mut command)
         .context("Failed to execute PHP for dump-env")?;
-    if !status.success() {
-        return Ok(status.code().unwrap_or(1));
+    if !process_output.status.success() {
+        return Ok(process_output.exit_code());
     }
     riff_core::successln!(
         context.output(),

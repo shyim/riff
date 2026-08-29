@@ -1,10 +1,10 @@
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Stdio};
 
 use anyhow::{bail, Context, Result};
 use riff_core::config::ConfigLoader;
 use riff_core::json::RiffManifest;
+use riff_core::ProcessRunner;
 
 #[derive(Debug, usage_rs::Args)]
 pub struct GlobalArgs {
@@ -31,8 +31,7 @@ pub fn execute(args: GlobalArgs, context: &crate::CommandContext) -> Result<i32>
     );
 
     let dynamic_script = is_script_command(&home, &args.command_name)?;
-    let executable = std::env::current_exe().context("Failed to locate Riff executable")?;
-    let mut command = Command::new(executable);
+    let mut command = context.runtime().riff_command();
     command.env_remove("COMPOSER");
     if dynamic_script {
         command.arg("run").arg(&args.command_name);
@@ -44,13 +43,10 @@ pub fn execute(args: GlobalArgs, context: &crate::CommandContext) -> Result<i32>
         command.arg("--no-interaction");
     }
     command.arg("-d").arg(&home);
-    let status = command
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
+    let process_output = ProcessRunner::new(context.output())
+        .execute(&mut command)
         .with_context(|| format!("Failed to run global command {}", args.command_name))?;
-    Ok(status.code().unwrap_or(1))
+    Ok(process_output.exit_code())
 }
 
 fn prepare_home(home: &Path) -> Result<()> {

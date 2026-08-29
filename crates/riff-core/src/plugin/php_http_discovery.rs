@@ -2,14 +2,15 @@
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::path::Path;
-use std::process::Command;
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
+use async_trait::async_trait;
 use riff_semver::VersionParser;
 
 use crate::event::{EventListener, EventType, PreAutoloadDumpEvent, RiffEvent};
 use crate::json::{LockedPackage, RiffLockfile, RiffManifest};
+use crate::process::ProcessRunner;
 use crate::riff::Riff;
 
 use super::manager::{PluginDescriptor, PluginRegistrar};
@@ -183,8 +184,9 @@ pub(super) fn register(registrar: &mut PluginRegistrar) {
     registrar.event(PACKAGE_NAME, EventType::PostUpdate, plugin);
 }
 
+#[async_trait(?Send)]
 impl EventListener for PhpHttpDiscoveryPlugin {
-    fn handle(&self, event: &dyn RiffEvent, riff: &Riff) -> Result<i32> {
+    async fn handle(&self, event: &dyn RiffEvent, riff: &Riff) -> Result<i32> {
         match event.event_type() {
             EventType::PreAutoloadDump => {
                 let Some(event) = event.as_any().downcast_ref::<PreAutoloadDumpEvent>() else {
@@ -546,10 +548,8 @@ fn run_require(
     development: bool,
     depth: u8,
 ) -> Result<()> {
-    let mut command = Command::new(&riff.runtime.riff_binary);
+    let mut command = riff.runtime.riff_command();
     command
-        .arg("--php")
-        .arg(&riff.runtime.php_binary)
         .arg("require")
         .args(packages)
         .arg("-d")
@@ -559,11 +559,15 @@ fn run_require(
         command.arg("--dev");
     }
 
-    let status = command
-        .status()
+    let process_output = ProcessRunner::new(riff.output())
+        .with_timeout_seconds(riff.config.process_timeout)
+        .execute(&mut command)
         .context("Failed to auto-install a php-http/discovery implementation")?;
-    if !status.success() {
-        bail!("php-http/discovery implementation installation failed with {status}");
+    if !process_output.status.success() {
+        bail!(
+            "php-http/discovery implementation installation failed with {}",
+            process_output.status
+        );
     }
     Ok(())
 }

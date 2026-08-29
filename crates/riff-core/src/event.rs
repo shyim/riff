@@ -8,6 +8,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use async_trait::async_trait;
+
 use crate::package::Package;
 use crate::solver::Transaction;
 
@@ -238,6 +240,12 @@ impl RiffEvent for PreAutoloadDumpEvent {
 }
 
 /// Event fired after dumping autoloader.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DependencyOperation {
+    Install,
+    Update,
+}
+
 #[derive(Debug, Clone)]
 pub struct PostAutoloadDumpEvent {
     /// Packages included in the autoload dump.
@@ -246,6 +254,7 @@ pub struct PostAutoloadDumpEvent {
     pub dev_mode: bool,
     /// Whether the autoloader was optimized.
     pub optimize: bool,
+    operation: Option<DependencyOperation>,
 }
 
 impl PostAutoloadDumpEvent {
@@ -254,7 +263,17 @@ impl PostAutoloadDumpEvent {
             packages,
             dev_mode,
             optimize,
+            operation: None,
         }
+    }
+
+    pub(crate) fn with_operation(mut self, operation: DependencyOperation) -> Self {
+        self.operation = Some(operation);
+        self
+    }
+
+    pub(crate) fn operation(&self) -> Option<DependencyOperation> {
+        self.operation
     }
 }
 
@@ -460,9 +479,10 @@ impl RiffEvent for PostCreateProjectEvent {
 ///
 /// Listeners receive the event, a reference to the Riff instance,
 /// and the working directory.
+#[async_trait(?Send)]
 pub trait EventListener: Send + Sync {
     /// Handle an event. Returns the exit code (0 for success).
-    fn handle(&self, event: &dyn RiffEvent, riff: &crate::riff::Riff) -> anyhow::Result<i32>;
+    async fn handle(&self, event: &dyn RiffEvent, riff: &crate::riff::Riff) -> anyhow::Result<i32>;
 
     /// Returns the priority of this listener (higher = earlier execution).
     fn priority(&self) -> i32 {
@@ -487,8 +507,9 @@ impl ScriptEventListener {
     }
 }
 
+#[async_trait(?Send)]
 impl EventListener for ScriptEventListener {
-    fn handle(&self, event: &dyn RiffEvent, riff: &crate::riff::Riff) -> anyhow::Result<i32> {
+    async fn handle(&self, event: &dyn RiffEvent, riff: &crate::riff::Riff) -> anyhow::Result<i32> {
         // Native plugins such as Symfony Flex can update composer.json during
         // the same lifecycle event. Composer reloads scripts before dispatch;
         // do the same instead of relying on the builder's original snapshot.
@@ -496,7 +517,7 @@ impl EventListener for ScriptEventListener {
             .ok()
             .and_then(|contents| serde_json::from_slice(&contents).ok());
         let manifest = manifest.as_ref().unwrap_or(&riff.manifest);
-        crate::scripts::run_event_script(
+        crate::scripts::run_event_script_async(
             event.script_name(),
             manifest,
             &riff.working_dir,
@@ -508,7 +529,9 @@ impl EventListener for ScriptEventListener {
                 bin_dir: riff.config.get_bin_dir(),
                 output: riff.output(),
             },
+            riff,
         )
+        .await
     }
 }
 
@@ -551,7 +574,7 @@ impl EventDispatcher {
     }
 
     /// Dispatch a typed event to all registered listeners.
-    pub fn dispatch<E: RiffEvent>(
+    pub async fn dispatch<E: RiffEvent>(
         &self,
         event: &E,
         riff: &crate::riff::Riff,
@@ -568,7 +591,7 @@ impl EventDispatcher {
         sorted_listeners.sort_by_key(|listener| std::cmp::Reverse(listener.priority()));
 
         for listener in sorted_listeners {
-            let exit_code = listener.handle(event, riff)?;
+            let exit_code = listener.handle(event, riff).await?;
             if exit_code != 0 {
                 return Ok(exit_code);
             }
@@ -664,8 +687,13 @@ mod tests {
     #[test]
     fn test_event_dispatcher_add_listener() {
         struct DummyListener;
+        #[async_trait(?Send)]
         impl EventListener for DummyListener {
-            fn handle(&self, _: &dyn RiffEvent, _: &crate::riff::Riff) -> anyhow::Result<i32> {
+            async fn handle(
+                &self,
+                _: &dyn RiffEvent,
+                _: &crate::riff::Riff,
+            ) -> anyhow::Result<i32> {
                 Ok(0)
             }
         }
@@ -683,11 +711,16 @@ mod tests {
     }
 
     // Ported from Composer\Test\EventDispatcher\EventDispatcherTest::testListenerExceptionsAreCaught.
-    #[test]
-    fn composer_dispatcher_propagates_listener_exceptions() {
+    #[tokio::test]
+    async fn composer_dispatcher_propagates_listener_exceptions() {
         struct FailingListener;
+        #[async_trait(?Send)]
         impl EventListener for FailingListener {
-            fn handle(&self, _: &dyn RiffEvent, _: &crate::riff::Riff) -> anyhow::Result<i32> {
+            async fn handle(
+                &self,
+                _: &dyn RiffEvent,
+                _: &crate::riff::Riff,
+            ) -> anyhow::Result<i32> {
                 anyhow::bail!("listener failed")
             }
         }
@@ -699,16 +732,22 @@ mod tests {
 
         let error = dispatcher
             .dispatch(&PostInstallEvent::new(true), &riff)
+            .await
             .unwrap_err();
         assert!(error.to_string().contains("listener failed"));
     }
 
     // Ported from Composer\Test\EventDispatcher\EventDispatcherTest::testDispatcherRemoveListener.
-    #[test]
-    fn composer_dispatcher_removes_all_registrations_of_a_listener() {
+    #[tokio::test]
+    async fn composer_dispatcher_removes_all_registrations_of_a_listener() {
         struct CountingListener(AtomicUsize);
+        #[async_trait(?Send)]
         impl EventListener for CountingListener {
-            fn handle(&self, _: &dyn RiffEvent, _: &crate::riff::Riff) -> anyhow::Result<i32> {
+            async fn handle(
+                &self,
+                _: &dyn RiffEvent,
+                _: &crate::riff::Riff,
+            ) -> anyhow::Result<i32> {
                 self.0.fetch_add(1, Ordering::SeqCst);
                 Ok(0)
             }
@@ -727,13 +766,16 @@ mod tests {
 
         dispatcher
             .dispatch(&PreInstallEvent::new(true), &riff)
+            .await
             .unwrap();
         dispatcher.remove_listener(&removed);
         dispatcher
             .dispatch(&PreInstallEvent::new(true), &riff)
+            .await
             .unwrap();
         dispatcher
             .dispatch(&PostInstallEvent::new(true), &riff)
+            .await
             .unwrap();
 
         assert_eq!(removed_concrete.0.load(Ordering::SeqCst), 2);
@@ -743,11 +785,16 @@ mod tests {
     }
 
     // Ported from Composer\Test\EventDispatcher\EventDispatcherTest::testDispatcherInstallerEvents.
-    #[test]
-    fn composer_dispatcher_delivers_pre_operations_installer_event() {
+    #[tokio::test]
+    async fn composer_dispatcher_delivers_pre_operations_installer_event() {
         struct InstallerListener(AtomicUsize);
+        #[async_trait(?Send)]
         impl EventListener for InstallerListener {
-            fn handle(&self, event: &dyn RiffEvent, _: &crate::riff::Riff) -> anyhow::Result<i32> {
+            async fn handle(
+                &self,
+                event: &dyn RiffEvent,
+                _: &crate::riff::Riff,
+            ) -> anyhow::Result<i32> {
                 assert_eq!(event.event_type(), EventType::PreOperationsExec);
                 assert!(event.dev_mode());
                 self.0.fetch_add(1, Ordering::SeqCst);
@@ -764,6 +811,7 @@ mod tests {
         assert_eq!(
             dispatcher
                 .dispatch(&PreOperationsExecEvent::new(true), &riff)
+                .await
                 .unwrap(),
             0
         );

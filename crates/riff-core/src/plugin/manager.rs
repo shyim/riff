@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{bail, Result};
 use async_trait::async_trait;
@@ -97,8 +98,11 @@ pub(crate) struct ScriptPluginContext<'a> {
     pub working_dir: &'a Path,
     pub runtime: &'a RuntimeContext,
     pub output: &'a crate::output::Output,
+    pub process_timeout: Option<Duration>,
+    pub riff: Option<&'a Riff>,
 }
 
+#[async_trait(?Send)]
 pub(crate) trait ComposerCommandHook: Send + Sync {
     fn execute(
         &self,
@@ -106,6 +110,15 @@ pub(crate) trait ComposerCommandHook: Send + Sync {
         extra_args: &[String],
         context: &ScriptPluginContext<'_>,
     ) -> Result<i32>;
+
+    async fn execute_async(
+        &self,
+        command: &str,
+        extra_args: &[String],
+        context: &ScriptPluginContext<'_>,
+    ) -> Result<i32> {
+        self.execute(command, extra_args, context)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -513,6 +526,28 @@ impl PluginManager {
         )?))
     }
 
+    pub(crate) async fn execute_composer_command_async(
+        &self,
+        command: &str,
+        extra_args: &[String],
+        context: &ScriptPluginContext<'_>,
+    ) -> Result<Option<i32>> {
+        let (name, remainder) = command
+            .split_once(char::is_whitespace)
+            .unwrap_or((command, ""));
+        let Some(registration) = self.inner.composer_commands.iter().find(|registration| {
+            registration.command == name && self.is_enabled(registration.package)
+        }) else {
+            return Ok(None);
+        };
+        Ok(Some(
+            registration
+                .hook
+                .execute_async(remainder.trim_start(), extra_args, context)
+                .await?,
+        ))
+    }
+
     pub(crate) fn expand_object_script(
         &self,
         script: &str,
@@ -596,12 +631,13 @@ struct ManagedEventListener {
     listener: Arc<dyn EventListener>,
 }
 
+#[async_trait(?Send)]
 impl EventListener for ManagedEventListener {
-    fn handle(&self, event: &dyn RiffEvent, riff: &Riff) -> Result<i32> {
+    async fn handle(&self, event: &dyn RiffEvent, riff: &Riff) -> Result<i32> {
         if !self.manager.is_enabled(self.package) {
             return Ok(0);
         }
-        self.listener.handle(event, riff)
+        self.listener.handle(event, riff).await
     }
 
     fn priority(&self) -> i32 {

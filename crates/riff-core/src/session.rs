@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 use futures_util::stream::{self, StreamExt};
 use serde_json::Value;
 
@@ -10,6 +11,7 @@ use crate::cache::runtime_cache_dir;
 use crate::downloader::SharedDownloadResources;
 use crate::http::HttpClient;
 use crate::installer::{InstallOptions, Installer, UpdateOptions};
+use crate::output::Output;
 use crate::repository::ComposerRepository;
 use crate::{Riff, RiffBuilder};
 
@@ -26,6 +28,19 @@ struct RiffSessionInner {
     repository_client: reqwest::Client,
     composer_repositories: Mutex<HashMap<ComposerRepositoryKey, Arc<ComposerRepository>>>,
     download_resources: SharedDownloadResources,
+    audit_hook: Option<Arc<dyn ProjectAuditHook>>,
+}
+
+/// Host-provided audit integration for multi-project operations.
+#[async_trait]
+pub trait ProjectAuditHook: Send + Sync {
+    async fn audit(
+        &self,
+        session: &RiffSession,
+        working_dir: &Path,
+        no_dev: bool,
+        output: Output,
+    ) -> Result<()>;
 }
 
 /// Reusable process-local resources for one or more Riff projects.
@@ -56,6 +71,10 @@ impl RiffSession {
         &self.inner.cache_dir
     }
 
+    pub fn supports_project_audit(&self) -> bool {
+        self.inner.audit_hook.is_some()
+    }
+
     pub async fn install_projects(
         &self,
         requests: impl IntoIterator<Item = ProjectInstallRequest>,
@@ -67,12 +86,25 @@ impl RiffSession {
         let mut results = stream::iter(requests.into_iter().enumerate())
             .map(|(index, request)| async move {
                 let working_dir = request.riff.working_dir.clone();
+                let output = request.riff.output().clone();
+                let audit = request.audit;
                 let result = if self.owns(&request.riff) {
                     let installer = Installer::new(request.riff);
-                    match request.operation {
+                    let result = match request.operation {
                         ProjectOperation::Install(options) => installer.install(options).await,
                         ProjectOperation::Update(options) => installer.update(options).await,
+                    };
+                    if matches!(result, Ok(0)) {
+                        if let (Some(audit), Some(hook)) = (audit, self.inner.audit_hook.as_ref()) {
+                            if let Err(error) = hook
+                                .audit(self, &working_dir, audit.no_dev, output.clone())
+                                .await
+                            {
+                                crate::warnln!(output, "Warning: Audit failed: {error}");
+                            }
+                        }
                     }
+                    result
                 } else {
                     Err(anyhow::anyhow!(
                         "project at '{}' belongs to a different Riff session",
@@ -151,6 +183,7 @@ pub struct RiffSessionBuilder {
     http_client: Option<Arc<HttpClient>>,
     max_concurrent_downloads: usize,
     max_concurrent_extractions: usize,
+    audit_hook: Option<Arc<dyn ProjectAuditHook>>,
 }
 
 impl RiffSessionBuilder {
@@ -160,6 +193,7 @@ impl RiffSessionBuilder {
             http_client: None,
             max_concurrent_downloads: 64,
             max_concurrent_extractions: 10,
+            audit_hook: None,
         }
     }
 
@@ -183,6 +217,11 @@ impl RiffSessionBuilder {
         self
     }
 
+    pub fn with_project_audit_hook(mut self, hook: Arc<dyn ProjectAuditHook>) -> Self {
+        self.audit_hook = Some(hook);
+        self
+    }
+
     pub fn build(self) -> Result<RiffSession> {
         let http_client = match self.http_client {
             Some(client) => client,
@@ -202,6 +241,7 @@ impl RiffSessionBuilder {
                     self.max_concurrent_downloads,
                     self.max_concurrent_extractions,
                 ),
+                audit_hook: self.audit_hook,
             }),
         })
     }
@@ -217,6 +257,7 @@ impl Default for RiffSessionBuilder {
 pub struct ProjectInstallRequest {
     riff: Riff,
     operation: ProjectOperation,
+    audit: Option<ProjectAuditOptions>,
 }
 
 impl ProjectInstallRequest {
@@ -224,6 +265,7 @@ impl ProjectInstallRequest {
         Self {
             riff,
             operation: ProjectOperation::Install(options),
+            audit: None,
         }
     }
 
@@ -231,8 +273,19 @@ impl ProjectInstallRequest {
         Self {
             riff,
             operation: ProjectOperation::Update(options),
+            audit: None,
         }
     }
+
+    pub fn with_audit(mut self, options: ProjectAuditOptions) -> Self {
+        self.audit = Some(options);
+        self
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ProjectAuditOptions {
+    pub no_dev: bool,
 }
 
 enum ProjectOperation {

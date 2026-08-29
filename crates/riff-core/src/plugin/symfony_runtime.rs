@@ -7,6 +7,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use async_trait::async_trait;
+
 use crate::event::{EventListener, EventType, PostAutoloadDumpEvent, RiffEvent};
 use crate::json::RiffManifest;
 use crate::riff::Riff;
@@ -61,8 +63,9 @@ pub(super) fn register(registrar: &mut PluginRegistrar) {
     registrar.event(PACKAGE_NAME, EventType::PostAutoloadDump, plugin);
 }
 
+#[async_trait(?Send)]
 impl EventListener for SymfonyRuntimePlugin {
-    fn handle(&self, event: &dyn RiffEvent, riff: &Riff) -> anyhow::Result<i32> {
+    async fn handle(&self, event: &dyn RiffEvent, riff: &Riff) -> anyhow::Result<i32> {
         if event.event_type() != EventType::PostAutoloadDump {
             return Ok(0);
         }

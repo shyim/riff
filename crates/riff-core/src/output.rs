@@ -230,6 +230,10 @@ impl Output {
             && io::stderr().is_terminal()
     }
 
+    pub(crate) fn captures_process_output(&self) -> bool {
+        !matches!(self.target, OutputTarget::Process) || self.options.mode == OutputMode::Json
+    }
+
     pub(crate) fn ansi_enabled(&self, stream: OutputStream) -> bool {
         match self.options.ansi {
             AnsiMode::Always => true,
@@ -508,5 +512,22 @@ mod tests {
             });
 
         assert!(!output.progress_enabled());
+    }
+
+    #[test]
+    fn process_output_is_captured_when_raw_inheritance_would_break_the_output_contract() {
+        assert!(Output::silent().captures_process_output());
+        assert!(Output::from_sink(Arc::new(Collector::default())).captures_process_output());
+        assert!(!Output::process(OutputOptions::default()).captures_process_output());
+        assert!(Output::process(OutputOptions {
+            mode: OutputMode::Json,
+            ..OutputOptions::default()
+        })
+        .captures_process_output());
+        assert!(!Output::process(OutputOptions {
+            quiet: true,
+            ..OutputOptions::default()
+        })
+        .captures_process_output());
     }
 }

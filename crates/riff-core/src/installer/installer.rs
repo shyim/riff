@@ -19,8 +19,8 @@ use crate::autoload::{
 };
 use crate::config::PlatformCheck;
 use crate::event::{
-    PostAutoloadDumpEvent, PostInstallEvent, PostUpdateEvent, PreAutoloadDumpEvent,
-    PreInstallEvent, PreOperationsExecEvent, PreUpdateEvent,
+    DependencyOperation, PostAutoloadDumpEvent, PostInstallEvent, PostUpdateEvent,
+    PreAutoloadDumpEvent, PreInstallEvent, PreOperationsExecEvent, PreUpdateEvent,
 };
 use crate::json::{LockAlias, LockedPackage, RiffLockfile, RiffManifest};
 use crate::package::{
@@ -415,7 +415,7 @@ impl Installer {
 
         // Dispatch pre-update event
         if !dry_run && !options.no_scripts {
-            let exit_code = self.riff.dispatch(&PreUpdateEvent::new(!no_dev))?;
+            let exit_code = self.riff.dispatch(&PreUpdateEvent::new(!no_dev)).await?;
             if exit_code != 0 {
                 return Ok(UpdateResult::exit(exit_code));
             }
@@ -1093,13 +1093,15 @@ impl Installer {
             }
         }
 
-        let policy = Policy::new()
-            .prefer_stable(prefer_stable)
-            .prefer_lowest(prefer_lowest)
-            .preferred_versions(preferred_versions);
-        let solver = Solver::new(&pool, &policy);
-
-        let mut solver_result = match solver.solve(&request) {
+        let mut solver_result = match Solver::new(
+            &pool,
+            &Policy::new()
+                .prefer_stable(prefer_stable)
+                .prefer_lowest(prefer_lowest)
+                .preferred_versions(preferred_versions),
+        )
+        .solve(&request)
+        {
             Ok(result) => result,
             Err(problems) => {
                 spinner.finish_and_clear();
@@ -1145,6 +1147,7 @@ impl Installer {
                 return Ok(UpdateResult::exit(2));
             }
         };
+        drop(pool);
 
         let non_dev_roots: HashSet<String> = manifest
             .require
@@ -1433,7 +1436,7 @@ impl Installer {
                 self.report_package_notices(&packages, &newly_installed_package_names);
             }
             if !dry_run && !options.no_scripts {
-                let exit_code = self.riff.dispatch(&PostUpdateEvent::new(!no_dev))?;
+                let exit_code = self.riff.dispatch(&PostUpdateEvent::new(!no_dev)).await?;
                 if exit_code != 0 {
                     return Ok(UpdateResult::exit(exit_code));
                 }
@@ -1526,7 +1529,8 @@ impl Installer {
                     !no_dev,
                     true,
                     Arc::new(transaction.clone()),
-                ))?;
+                ))
+                .await?;
             if exit_code != 0 {
                 return Ok(UpdateResult::exit(exit_code));
             }
@@ -1643,7 +1647,7 @@ impl Installer {
                     !no_dev,
                     options.optimize_autoloader || options.classmap_authoritative,
                 );
-                let exit_code = self.riff.dispatch(&event)?;
+                let exit_code = self.riff.dispatch(&event).await?;
                 if exit_code != 0 {
                     return Ok(UpdateResult::exit(exit_code));
                 }
@@ -1732,8 +1736,9 @@ impl Installer {
                     arc_packages,
                     !no_dev,
                     options.optimize_autoloader || options.classmap_authoritative,
-                );
-                let exit_code = self.riff.dispatch(&event)?;
+                )
+                .with_operation(DependencyOperation::Update);
+                let exit_code = self.riff.dispatch(&event).await?;
                 if exit_code != 0 {
                     return Ok(UpdateResult::exit(exit_code));
                 }
@@ -1773,7 +1778,7 @@ impl Installer {
             if let Some(plugin_operations) = plugin_operations {
                 plugin_operations.apply(&self.riff)?;
             }
-            let exit_code = self.riff.dispatch(&PostUpdateEvent::new(!no_dev))?;
+            let exit_code = self.riff.dispatch(&PostUpdateEvent::new(!no_dev)).await?;
             if exit_code != 0 {
                 return Ok(UpdateResult::exit(exit_code));
             }
@@ -1814,7 +1819,7 @@ impl Installer {
 
         // Dispatch pre-install event
         if !dry_run && !options.no_scripts {
-            let exit_code = self.riff.dispatch(&PreInstallEvent::new(!no_dev))?;
+            let exit_code = self.riff.dispatch(&PreInstallEvent::new(!no_dev)).await?;
             if exit_code != 0 {
                 return Ok(exit_code);
             }
@@ -1962,7 +1967,8 @@ impl Installer {
                     !no_dev,
                     true,
                     Arc::new(transaction.clone()),
-                ))?;
+                ))
+                .await?;
             if exit_code != 0 {
                 return Ok(exit_code);
             }
@@ -2017,7 +2023,7 @@ impl Installer {
                     !no_dev,
                     options.optimize_autoloader || options.classmap_authoritative,
                 );
-                let exit_code = self.riff.dispatch(&event)?;
+                let exit_code = self.riff.dispatch(&event).await?;
                 if exit_code != 0 {
                     return Ok(exit_code);
                 }
@@ -2113,8 +2119,9 @@ impl Installer {
                     arc_packages,
                     dev_mode,
                     options.optimize_autoloader || options.classmap_authoritative,
-                );
-                let exit_code = self.riff.dispatch(&event)?;
+                )
+                .with_operation(DependencyOperation::Install);
+                let exit_code = self.riff.dispatch(&event).await?;
                 if exit_code != 0 {
                     return Ok(exit_code);
                 }
@@ -2149,7 +2156,7 @@ impl Installer {
 
         // Dispatch post-install event
         if !options.no_scripts && !dry_run {
-            let exit_code = self.riff.dispatch(&PostInstallEvent::new(!no_dev))?;
+            let exit_code = self.riff.dispatch(&PostInstallEvent::new(!no_dev)).await?;
             if exit_code != 0 {
                 return Ok(exit_code);
             }
@@ -2158,7 +2165,7 @@ impl Installer {
         Ok(0)
     }
 
-    pub fn dump_autoload(&self, options: DumpAutoloadOptions) -> Result<()> {
+    pub async fn dump_autoload(&self, options: DumpAutoloadOptions) -> Result<()> {
         let DumpAutoloadOptions {
             optimize,
             authoritative,
@@ -2192,7 +2199,7 @@ impl Installer {
         let mut additional_classmap = Vec::new();
         if !no_scripts {
             let event = PreAutoloadDumpEvent::new(!no_dev, optimize || authoritative);
-            let exit_code = self.riff.dispatch(&event)?;
+            let exit_code = self.riff.dispatch(&event).await?;
             if exit_code != 0 {
                 anyhow::bail!("pre-autoload-dump script exited with code {}", exit_code);
             }
@@ -2303,7 +2310,7 @@ impl Installer {
         if !no_scripts {
             let event =
                 PostAutoloadDumpEvent::new(arc_packages, dev_mode, optimize || authoritative);
-            self.riff.dispatch(&event)?;
+            self.riff.dispatch(&event).await?;
         }
 
         if optimized {

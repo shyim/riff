@@ -31,6 +31,10 @@ pub struct Riff {
     pub package_policy: PackagePolicyConfig,
     pub output: Output,
     pub(crate) session: RiffSession,
+    pub(crate) platform: Platform,
+    pub(crate) policy_environment: PolicyEnvironment,
+    pub(crate) plugins_enabled: bool,
+    pub(crate) audit_enabled: bool,
     plugin_manager: PluginManager,
 }
 
@@ -57,8 +61,8 @@ impl Riff {
     }
 
     /// Dispatch a typed event and return the exit code.
-    pub fn dispatch<E: crate::event::RiffEvent>(&self, event: &E) -> anyhow::Result<i32> {
-        self.event_dispatcher.dispatch(event, self)
+    pub async fn dispatch<E: crate::event::RiffEvent>(&self, event: &E) -> anyhow::Result<i32> {
+        self.event_dispatcher.dispatch(event, self).await
     }
 
     /// Get the vendor directory path.
@@ -101,6 +105,7 @@ pub struct RiffBuilder {
     // Executables used by @php and @composer scripts.
     runtime: RuntimeContext,
     plugins_enabled: bool,
+    audit_enabled: bool,
     policy_environment: PolicyEnvironment,
     output: Output,
 
@@ -130,6 +135,7 @@ impl RiffBuilder {
             platform: None,
             runtime: RuntimeContext::default(),
             plugins_enabled: true,
+            audit_enabled: true,
             policy_environment: PolicyEnvironment::new(),
             output: Output::silent(),
             disable_packagist: None,
@@ -240,6 +246,12 @@ impl RiffBuilder {
         self
     }
 
+    /// Declare whether nested package-manager operations should run audits.
+    pub fn audit_enabled(mut self, enabled: bool) -> Self {
+        self.audit_enabled = enabled;
+        self
+    }
+
     /// Supply the dependency-policy environment explicitly. CLI callers use a
     /// process snapshot while embedders can remain fully deterministic.
     pub fn with_policy_environment(mut self, environment: PolicyEnvironment) -> Self {
@@ -274,10 +286,11 @@ impl RiffBuilder {
             )
         })?;
         let platform_packages = platform.to_packages(&config.platform)?;
+        let policy_environment = self.policy_environment.clone();
         let package_policy = PackagePolicyConfig::from_raw(
             &config.policy,
             &config.audit_policy,
-            &self.policy_environment,
+            &policy_environment,
         )?;
 
         let session = match (self.session.take(), self.http_client.take()) {
@@ -327,6 +340,10 @@ impl RiffBuilder {
             package_policy,
             output: self.output,
             session,
+            platform,
+            policy_environment,
+            plugins_enabled: self.plugins_enabled,
+            audit_enabled: self.audit_enabled,
             plugin_manager,
         })
     }
@@ -419,6 +436,7 @@ impl Clone for RiffBuilder {
             platform: self.platform.clone(),
             runtime: self.runtime.clone(),
             plugins_enabled: self.plugins_enabled,
+            audit_enabled: self.audit_enabled,
             policy_environment: self.policy_environment.clone(),
             output: self.output.clone(),
             disable_packagist: self.disable_packagist,

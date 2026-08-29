@@ -224,8 +224,10 @@ pub async fn execute(args: InstallArgs, context: &CommandContext) -> Result<i32>
         None
     };
 
-    // Create Riff using builder
+    // Create Riff using a session that nested vendor-bin projects can reuse.
+    let session = crate::commands::audit::project_session(context)?;
     let mut builder = RiffBuilder::new(working_dir.clone())
+        .with_session(session)
         .with_config(config)
         .with_manifest(manifest)
         .with_lockfile(lock)
@@ -234,6 +236,7 @@ pub async fn execute(args: InstallArgs, context: &CommandContext) -> Result<i32>
         .with_output(context.output().clone())
         .with_policy_environment(PolicyEnvironment::from_process())
         .plugins_enabled(!args.no_plugins)
+        .audit_enabled(!skip_audit)
         .dry_run(args.dry_run)
         .download_only(args.download_only)
         .no_dev(no_dev);

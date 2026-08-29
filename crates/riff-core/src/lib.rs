@@ -48,11 +48,13 @@ pub use output::{
 pub use package::Package;
 pub use platform::{Platform, PlatformSnapshot};
 pub use plugin::{BinConfig, PackageOperation, PluginManager};
+pub use process::ProcessRunner;
 pub use repository::{Repository, RepositoryManager};
 pub use riff::{Riff, RiffBuilder};
 pub use runtime::RuntimeContext;
 pub use session::{
-    BatchOptions, ProjectInstallRequest, ProjectInstallResult, RiffSession, RiffSessionBuilder,
+    BatchOptions, ProjectAuditHook, ProjectAuditOptions, ProjectInstallRequest,
+    ProjectInstallResult, RiffSession, RiffSessionBuilder,
 };
 pub use solver::{Policy, Pool, Request, Solver, Transaction};
 pub use util::{compute_content_hash, is_platform_package};

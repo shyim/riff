@@ -111,7 +111,7 @@ pub async fn execute(args: DumpAutoloadArgs, context: &CommandContext) -> Result
     // Run Installer
     let installer = Installer::new(riff);
 
-    installer.dump_autoload(options)?;
+    installer.dump_autoload(options).await?;
 
     Ok(0)
 }

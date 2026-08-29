@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 use colored::Colorize;
 use foldhash::{HashMap, HashSet};
 use riff_core::advisory::{
@@ -13,11 +14,14 @@ use riff_core::policy_config::{
 };
 use riff_core::repository::InstalledRepository;
 use riff_core::util::{canonical_package_name, is_platform_package};
-use riff_core::{Package, Platform, Repository, RiffBuilder};
+use riff_core::{
+    Output, Package, Platform, ProjectAuditHook, Repository, RiffBuilder, RiffSession,
+};
 use riff_semver::Semver;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 #[derive(usage_rs::Args, Debug)]
 pub struct AuditArgs {
@@ -178,6 +182,16 @@ pub(crate) async fn execute_with_context(
     existing_installed_names: Option<&HashSet<String>>,
     context: &crate::CommandContext,
 ) -> Result<i32> {
+    execute_with_session(args, existing_lock, existing_installed_names, context, None).await
+}
+
+async fn execute_with_session(
+    args: AuditArgs,
+    existing_lock: Option<&RiffLockfile>,
+    existing_installed_names: Option<&HashSet<String>>,
+    context: &crate::CommandContext,
+    session: Option<&RiffSession>,
+) -> Result<i32> {
     let working_dir = args
         .working_dir
         .canonicalize()
@@ -257,7 +271,11 @@ pub(crate) async fn execute_with_context(
         return Ok(0);
     }
 
-    let mut riff = RiffBuilder::new(working_dir.clone())
+    let builder = session.map_or_else(
+        || RiffBuilder::new(working_dir.clone()),
+        |session| session.project(working_dir.clone()),
+    );
+    let mut riff = builder
         .with_config(config)
         .with_manifest(typed_manifest)
         .with_lockfile(Some(lock.clone()))
@@ -286,6 +304,49 @@ pub(crate) async fn execute_with_context(
         PackagePolicy::load(&riff, &runtime_package_refs, PolicyScope::Audit, false).await?;
 
     render_audit_result(&args, &dependency_policy, audited_packages, context)
+}
+
+#[derive(Clone)]
+struct SessionAuditHook {
+    context: crate::CommandContext,
+}
+
+#[async_trait]
+impl ProjectAuditHook for SessionAuditHook {
+    async fn audit(
+        &self,
+        session: &RiffSession,
+        working_dir: &Path,
+        no_dev: bool,
+        output: Output,
+    ) -> Result<()> {
+        let context = self.context.clone().with_output(output);
+        let _ = execute_with_session(
+            AuditArgs {
+                no_dev,
+                format: "summary".to_string(),
+                locked: false,
+                abandoned: Some("report".to_string()),
+                ignore_severity: Vec::new(),
+                ignore_unreachable: false,
+                working_dir: working_dir.to_path_buf(),
+            },
+            None,
+            None,
+            &context,
+            Some(session),
+        )
+        .await?;
+        Ok(())
+    }
+}
+
+pub(crate) fn project_session(context: &crate::CommandContext) -> Result<RiffSession> {
+    RiffSession::builder()
+        .with_project_audit_hook(Arc::new(SessionAuditHook {
+            context: context.clone(),
+        }))
+        .build()
 }
 
 fn render_audit_result(

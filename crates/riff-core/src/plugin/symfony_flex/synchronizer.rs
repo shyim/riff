@@ -1,11 +1,11 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{Context, Result};
 use serde_json::{Map, Value};
 
 use crate::json::{LockedPackage, RiffLockfile};
+use crate::process::ProcessRunner;
 use crate::riff::Riff;
 
 use super::FlexOptions;
@@ -295,6 +295,8 @@ fn synchronize_importmap(
             }
         }
     }
+    let process_runner =
+        ProcessRunner::new(riff.output()).with_timeout_seconds(riff.config.process_timeout);
     for (name, (asset, config)) in entries {
         if importmap_contents.contains(&format!("'{name}'"))
             || importmap_contents.contains(&format!("\"{name}\""))
@@ -325,7 +327,7 @@ fn synchronize_importmap(
             version = format!("path:{path}");
             entrypoint = true;
         }
-        let mut command = Command::new(&riff.runtime.php_binary);
+        let mut command = riff.runtime.php_command();
         command.arg(&console).arg("importmap:require");
         if let Some(path) = version.strip_prefix("path:") {
             let package_dir = asset.path.parent().unwrap_or(&asset.path).to_string_lossy();
@@ -344,8 +346,9 @@ fn synchronize_importmap(
             }
             command.arg(requirement);
         }
-        let status = command.current_dir(root).status()?;
-        if !status.success() {
+        command.current_dir(root);
+        let process_output = process_runner.execute(&mut command)?;
+        if !process_output.status.success() {
             anyhow::bail!("importmap:require failed while synchronizing {name}");
         }
     }

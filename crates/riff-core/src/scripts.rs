@@ -2,6 +2,7 @@
 
 use crate::output::{style, Output};
 use anyhow::{Context, Result};
+use futures_util::future::LocalBoxFuture;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -10,7 +11,7 @@ use std::time::Duration;
 use crate::json::{RiffManifest, ScriptValue};
 use crate::plugin::manager::{ObjectScriptAction, ScriptPluginContext};
 use crate::plugin::PluginManager;
-use crate::process::{escape_argument, redact_command, OutputMode, ProcessError, ProcessExecutor};
+use crate::process::{escape_argument, redact_command, ProcessError, ProcessRunner};
 use crate::runtime::RuntimeContext;
 
 /// Default process timeout in seconds (same as Riff)
@@ -187,6 +188,7 @@ struct CommandEnvironment<'a> {
     runtime: &'a RuntimeContext,
     plugins: &'a PluginManager,
     output: &'a Output,
+    riff: Option<&'a crate::riff::Riff>,
 }
 
 /// Run a specific event script if it exists
@@ -218,6 +220,7 @@ pub fn run_event_script(
         runtime: options.runtime,
         plugins: options.plugins,
         output: options.output,
+        riff: None,
     };
 
     for cmd in commands {
@@ -227,6 +230,59 @@ pub fn run_event_script(
 
         let exit_code =
             run_command_with_stack(cmd, &[], &mut ctx, &mut script_stack, &environment)?;
+
+        if exit_code != 0 {
+            crate::errln!(
+                options.output,
+                "{}",
+                script_failure_message(cmd, event_name, exit_code)
+            );
+            return Ok(exit_code);
+        }
+    }
+
+    Ok(0)
+}
+
+/// Run an event script while allowing native Composer command hooks to reuse
+/// the current Riff instance and its shared session.
+pub(crate) async fn run_event_script_async(
+    event_name: &str,
+    manifest: &RiffManifest,
+    working_dir: &Path,
+    quiet: bool,
+    options: ScriptExecutionOptions<'_>,
+    riff: &crate::riff::Riff,
+) -> Result<i32> {
+    let scripts = collect_scripts(manifest);
+    let object_scripts = collect_object_scripts(manifest);
+    let filter = ScriptFilter::from_process();
+
+    if !has_script_listeners(event_name, &scripts, &filter) {
+        return Ok(0);
+    }
+
+    let mut ctx = ScriptContext::new(options.dev_mode, options.bin_dir);
+    let mut script_stack = vec![event_name.to_string()];
+    let environment = CommandEnvironment {
+        working_dir,
+        scripts: &scripts,
+        object_scripts: &object_scripts,
+        manifest,
+        runtime: options.runtime,
+        plugins: options.plugins,
+        output: options.output,
+        riff: Some(riff),
+    };
+
+    for cmd in &scripts[event_name] {
+        if !quiet {
+            crate::outln!(options.output, "{}", script_command_message(cmd));
+        }
+
+        let exit_code =
+            run_command_with_stack_async(cmd, &[], &mut ctx, &mut script_stack, &environment)
+                .await?;
 
         if exit_code != 0 {
             crate::errln!(
@@ -271,6 +327,7 @@ pub fn run_script(
                 runtime: options.runtime,
                 plugins: options.plugins,
                 output: options.output,
+                riff: None,
             },
         );
     }
@@ -308,6 +365,7 @@ pub fn run_script(
         runtime: options.runtime,
         plugins: options.plugins,
         output: options.output,
+        riff: None,
     };
 
     for cmd in commands {
@@ -369,6 +427,7 @@ pub fn run_command_with_output(
         runtime,
         plugins: &plugins,
         output,
+        riff: None,
     };
     run_command_with_stack(cmd, extra_args, ctx, &mut Vec::new(), &environment)
 }
@@ -413,12 +472,18 @@ fn run_command_with_stack(
                 working_dir: environment.working_dir,
                 runtime: environment.runtime,
                 output: environment.output,
+                process_timeout: ctx.process_timeout.map(Duration::from_secs),
+                riff: environment.riff,
             },
         )? {
             return Ok(exit_code);
         }
         let riff_binary = shell_escape(environment.runtime.riff_binary.to_string_lossy().as_ref());
-        let full_cmd = append_arguments(&format!("{} {}", riff_binary, composer_cmd), extra_args);
+        let php_binary = shell_escape(environment.runtime.php_binary.to_string_lossy().as_ref());
+        let full_cmd = append_arguments(
+            &format!("{riff_binary} --php {php_binary} {composer_cmd}"),
+            extra_args,
+        );
 
         return execute_shell_command(&full_cmd, environment.working_dir, ctx, environment.output);
     }
@@ -516,6 +581,167 @@ fn run_command_with_stack(
     execute_shell_command(&full_cmd, environment.working_dir, ctx, environment.output)
 }
 
+fn run_command_with_stack_async<'a>(
+    cmd: &'a str,
+    extra_args: &'a [String],
+    ctx: &'a mut ScriptContext,
+    script_stack: &'a mut Vec<String>,
+    environment: &'a CommandEnvironment<'a>,
+) -> LocalBoxFuture<'a, Result<i32>> {
+    Box::pin(async move {
+        if let Some(env_assignment) = cmd.strip_prefix("@putenv ") {
+            if let Some((key, value)) = env_assignment.split_once('=') {
+                ctx.env_vars.insert(key.to_string(), value.to_string());
+                std::env::set_var(key, value);
+            }
+            return Ok(0);
+        }
+
+        if cmd.contains("Composer\\Config::disableProcessTimeout") {
+            ctx.disable_timeout();
+            return Ok(0);
+        }
+
+        if let Some(php_cmd) = cmd.strip_prefix("@php ") {
+            let php_binary =
+                shell_escape(environment.runtime.php_binary.to_string_lossy().as_ref());
+            let full_cmd = append_arguments(&format!("{} {}", php_binary, php_cmd), extra_args);
+            return execute_shell_command(
+                &full_cmd,
+                environment.working_dir,
+                ctx,
+                environment.output,
+            );
+        }
+
+        if let Some(composer_cmd) = cmd.strip_prefix("@composer ") {
+            if let Some(exit_code) = environment
+                .plugins
+                .execute_composer_command_async(
+                    composer_cmd,
+                    extra_args,
+                    &ScriptPluginContext {
+                        manifest: environment.manifest,
+                        working_dir: environment.working_dir,
+                        runtime: environment.runtime,
+                        output: environment.output,
+                        process_timeout: ctx.process_timeout.map(Duration::from_secs),
+                        riff: environment.riff,
+                    },
+                )
+                .await?
+            {
+                return Ok(exit_code);
+            }
+            let riff_binary =
+                shell_escape(environment.runtime.riff_binary.to_string_lossy().as_ref());
+            let php_binary =
+                shell_escape(environment.runtime.php_binary.to_string_lossy().as_ref());
+            let full_cmd = append_arguments(
+                &format!("{riff_binary} --php {php_binary} {composer_cmd}"),
+                extra_args,
+            );
+            return execute_shell_command(
+                &full_cmd,
+                environment.working_dir,
+                ctx,
+                environment.output,
+            );
+        }
+
+        if let Some(script_invocation) = cmd.strip_prefix('@') {
+            let (script_ref, inline_args) = script_invocation
+                .split_once(char::is_whitespace)
+                .unwrap_or((script_invocation, ""));
+            if let Some(ref_commands) = environment.scripts.get(script_ref) {
+                if script_stack.iter().any(|active| active == script_ref) {
+                    anyhow::bail!(
+                        "Circular call to script '{}' detected in {}",
+                        script_ref,
+                        script_stack.join(" -> ")
+                    );
+                }
+                crate::outln!(
+                    environment.output,
+                    "{} Running referenced script: {}",
+                    style(">").green(),
+                    style(script_ref).cyan()
+                );
+                let mut referenced_args: Vec<String> = inline_args
+                    .split_whitespace()
+                    .map(ToString::to_string)
+                    .collect();
+                referenced_args.extend(extra_args.iter().cloned());
+                script_stack.push(script_ref.to_string());
+                let mut result = Ok(0);
+                for ref_cmd in ref_commands {
+                    crate::outln!(
+                        environment.output,
+                        "{} {}",
+                        style(">").green(),
+                        style(redact_command(ref_cmd)).dim()
+                    );
+                    match run_command_with_stack_async(
+                        ref_cmd,
+                        &referenced_args,
+                        ctx,
+                        script_stack,
+                        environment,
+                    )
+                    .await
+                    {
+                        Ok(0) => {}
+                        other => {
+                            result = other;
+                            break;
+                        }
+                    }
+                }
+                script_stack.pop();
+                return result;
+            }
+            if let Some(configuration) = environment.object_scripts.get(script_ref) {
+                if script_stack.iter().any(|active| active == script_ref) {
+                    anyhow::bail!(
+                        "Circular call to script '{}' detected in {}",
+                        script_ref,
+                        script_stack.join(" -> ")
+                    );
+                }
+                crate::outln!(
+                    environment.output,
+                    "{} Running referenced script: {}",
+                    style(">").green(),
+                    style(script_ref).cyan()
+                );
+                let mut referenced_args: Vec<String> = inline_args
+                    .split_whitespace()
+                    .map(ToString::to_string)
+                    .collect();
+                referenced_args.extend(extra_args.iter().cloned());
+                return run_object_script(
+                    script_ref,
+                    configuration,
+                    &referenced_args,
+                    ctx,
+                    environment,
+                );
+            }
+
+            crate::errln!(
+                environment.output,
+                "{} Referenced script '{}' not found",
+                style("Warning:").yellow(),
+                script_ref
+            );
+            return Ok(1);
+        }
+
+        let full_cmd = append_arguments(cmd, extra_args);
+        execute_shell_command(&full_cmd, environment.working_dir, ctx, environment.output)
+    })
+}
+
 fn run_object_script(
     script_name: &str,
     configuration: &indexmap::IndexMap<String, serde_json::Value>,
@@ -532,6 +758,8 @@ fn run_object_script(
             working_dir: environment.working_dir,
             runtime: environment.runtime,
             output: environment.output,
+            process_timeout: ctx.process_timeout.map(Duration::from_secs),
+            riff: environment.riff,
         },
     )?
     else {
@@ -653,8 +881,11 @@ fn execute_shell_command(
     }
 
     let timeout = ctx.process_timeout.map(Duration::from_secs);
-    match ProcessExecutor::new(timeout).execute(&mut command, OutputMode::Inherit) {
-        Ok(output) => Ok(output.exit_code()),
+    match ProcessRunner::new(output)
+        .with_timeout(timeout)
+        .execute(&mut command)
+    {
+        Ok(process_output) => Ok(process_output.exit_code()),
         Err(ProcessError::Timeout(_)) => {
             crate::errln!(
                 output,
@@ -760,8 +991,18 @@ pub fn list_scripts_with_output(manifest: &RiffManifest, output: &Output) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::output::OutputStream;
     #[cfg(unix)]
     use crate::test_support::{environment_lock, EnvironmentGuard};
+
+    #[derive(Default)]
+    struct OutputCollector(std::sync::Mutex<Vec<crate::output::OutputEvent>>);
+
+    impl crate::output::OutputSink for OutputCollector {
+        fn emit(&self, event: crate::output::OutputEvent) {
+            self.0.lock().unwrap().push(event);
+        }
+    }
 
     #[cfg(unix)]
     fn executable(path: &Path, contents: &str) {
@@ -791,6 +1032,34 @@ mod tests {
             append_arguments("printf @additional_args suffix", &["two words".to_string()]),
             "printf 'two words' suffix"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shell_output_is_captured_by_instance_scoped_output_sinks() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let collector = std::sync::Arc::new(OutputCollector::default());
+        let output = Output::from_sink(collector.clone());
+
+        assert_eq!(
+            execute_shell_command(
+                "printf stdout; printf stderr >&2",
+                directory.path(),
+                &ScriptContext::default(),
+                &output,
+            )
+            .unwrap(),
+            0
+        );
+
+        let events = collector.0.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].stream, OutputStream::Stdout);
+        assert_eq!(events[0].message, "stdout");
+        assert!(!events[0].newline);
+        assert_eq!(events[1].stream, OutputStream::Stderr);
+        assert_eq!(events[1].message, "stderr");
+        assert!(!events[1].newline);
     }
 
     #[cfg(unix)]
@@ -938,6 +1207,36 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(directory.path().join("php.txt")).unwrap(),
             "php"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn composer_dispatcher_pins_php_for_riff_subprocesses() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let fake_riff = directory.path().join("fake-riff");
+        executable(
+            &fake_riff,
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > riff-args.txt\n",
+        );
+        let custom_php = directory.path().join("custom-php");
+        let runtime = RuntimeContext::new(custom_php.clone(), fake_riff);
+        let mut context = ScriptContext::new(true, directory.path().join("vendor/bin"));
+
+        let exit_code = run_command(
+            "@composer show vendor/package",
+            directory.path(),
+            &[],
+            &HashMap::new(),
+            &mut context,
+            &runtime,
+        )
+        .unwrap();
+
+        assert_eq!(exit_code, 0);
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("riff-args.txt")).unwrap(),
+            format!("--php\n{}\nshow\nvendor/package\n", custom_php.display())
         );
     }
 
