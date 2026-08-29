@@ -23,6 +23,7 @@ struct ComposerRepositoryKey {
 struct RiffSessionInner {
     cache_dir: PathBuf,
     http_client: Arc<HttpClient>,
+    repository_client: reqwest::Client,
     composer_repositories: Mutex<HashMap<ComposerRepositoryKey, Arc<ComposerRepository>>>,
     download_resources: SharedDownloadResources,
 }
@@ -124,7 +125,7 @@ impl RiffSession {
                 name,
                 url,
                 self.inner.cache_dir.clone(),
-                self.inner.http_client.shared_client(),
+                self.inner.repository_client.clone(),
             );
             repository.set_user_filter_config(filter.clone());
             Arc::new(repository)
@@ -187,10 +188,15 @@ impl RiffSessionBuilder {
             Some(client) => client,
             None => Arc::new(HttpClient::new().context("Failed to create HTTP client")?),
         };
+        let repository_client = reqwest::Client::builder()
+            .user_agent("riff-composer/0.1.0")
+            .build()
+            .context("Failed to create repository HTTP client")?;
         Ok(RiffSession {
             inner: Arc::new(RiffSessionInner {
                 cache_dir: self.cache_dir.unwrap_or_else(runtime_cache_dir),
                 http_client,
+                repository_client,
                 composer_repositories: Mutex::new(HashMap::new()),
                 download_resources: SharedDownloadResources::new(
                     self.max_concurrent_downloads,

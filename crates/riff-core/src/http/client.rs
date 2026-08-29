@@ -180,11 +180,6 @@ impl HttpClient {
         })
     }
 
-    /// Clone the underlying client while retaining its connection pool.
-    pub(crate) fn shared_client(&self) -> Client {
-        self.client.clone()
-    }
-
     /// Set authentication configuration
     pub fn with_auth(mut self, auth: AuthConfig) -> Self {
         self.auth = Some(Arc::new(auth));
