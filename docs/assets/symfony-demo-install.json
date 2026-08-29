@@ -1,0 +1,85 @@
+{
+  "schema": 1,
+  "measured_at": "2026-08-29",
+  "fixture": {
+    "repository": "https://github.com/symfony/demo.git",
+    "commit": "920d86dc809f837543cb519d3df5b364a2c36577",
+    "packages": 153
+  },
+  "environment": {
+    "php": "8.5.9",
+    "composer": "2.10.2",
+    "riff": "0.0.5",
+    "riff_commit": "0491935a913c342621cd88955a9d701128969faa",
+    "hyperfine": "1.20.0",
+    "system": "Linux 7.2.0-61.fc45.x86_64 x86_64",
+    "cpu": "AMD EPYC-Genoa Processor"
+  },
+  "command": {
+    "common": [
+      "install",
+      "--prefer-dist",
+      "--no-interaction",
+      "--no-progress",
+      "--no-plugins",
+      "--no-scripts",
+      "--no-ansi"
+    ],
+    "riff_only": [
+      "--no-audit"
+    ]
+  },
+  "cache_policy": {
+    "projects": "A fresh project tree is extracted before every timed run.",
+    "cold": "No package archives or repository metadata are retained.",
+    "warm": "Only package archives from an untimed install are retained; repository metadata is not retained.",
+    "riff_platform": "PHP platform facts are primed before timing and retained identically for cold and warm runs."
+  },
+  "order": "Tools alternate which one runs first on every iteration.",
+  "runs": {
+    "cold": 3,
+    "warm": 5
+  },
+  "results": {
+    "cold": {
+      "riff": {
+        "samples_ms": [
+          1849.421081,
+          1575.916412,
+          1627.825605
+        ],
+        "median_ms": 1627.825605
+      },
+      "composer": {
+        "samples_ms": [
+          7475.726889,
+          7019.087347,
+          7351.448606
+        ],
+        "median_ms": 7351.448606
+      }
+    },
+    "warm": {
+      "riff": {
+        "samples_ms": [
+          338.772479,
+          324.585926,
+          322.890661,
+          306.367379,
+          318.737545
+        ],
+        "median_ms": 322.890661
+      },
+      "composer": {
+        "samples_ms": [
+          2020.918841,
+          1986.064622,
+          1999.084528,
+          1905.870555,
+          1914.993679
+        ],
+        "median_ms": 1986.064622
+      }
+    }
+  }
+}

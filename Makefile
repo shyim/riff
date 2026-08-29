@@ -2,13 +2,19 @@ PHP_BIN ?= $(shell command -v php 2>/dev/null)
 COMPOSER_SRC_DIR ?= $(CURDIR)/shopware/composer
 RIFF_BIN ?= $(CURDIR)/target/debug/riff
 
-.PHONY: build release fmt clippy test test-core test-cli test-composer test-composer-case composer-test-check composer-test-inventories composer-test-inventory composer-test-pending composer-php-test-inventory composer-php-test-pending composer-php-test-delegated composer-php-test-case composer-php-test-group composer-functional-test-inventory composer-functional-test-pending composer-functional-test-case homebrew-formula-check check composer-reference parity
+.PHONY: build release benchmark benchmark-render fmt clippy test test-core test-cli test-composer test-composer-case composer-test-check composer-test-inventories composer-test-inventory composer-test-pending composer-php-test-inventory composer-php-test-pending composer-php-test-delegated composer-php-test-case composer-php-test-group composer-functional-test-inventory composer-functional-test-pending composer-functional-test-case homebrew-formula-check check composer-reference parity
 
 build:
 	@cargo build --workspace
 
 release:
 	@cargo build --release --workspace --locked
+
+benchmark: release
+	@./scripts/benchmark-symfony-demo.sh
+
+benchmark-render:
+	@./scripts/render-symfony-demo-benchmark.sh
 
 homebrew-formula-check:
 	@./packaging/homebrew/test-render-formula.sh

@@ -37,16 +37,21 @@ or execute an `@php` project script.
 
 ![Symfony Demo install benchmark](docs/assets/symfony-demo-install.svg)
 
-These are local wall-clock medians measured on 2026-08-26 using
+These are local wall-clock medians measured using
 [`symfony/demo`](https://github.com/symfony/demo) at commit `920d86d` (153
-packages), PHP 8.5.9, Composer 2.10.2, and Riff 0.0.2. Each tool installed into
-a fresh working tree with `install` plus `--prefer-dist`, `--no-interaction`,
-`--no-progress`, `--no-plugins`, `--no-scripts`, and `--no-ansi`; Riff also used
-`--no-audit` because Composer does not audit on install by default. The tools
-alternated order across three cold-cache runs and five warm-cache runs. Cold
-runs used empty, isolated caches, so package ZIP archives were downloaded; warm
-runs reused only the archive cache populated by the final cold run. Results
-will vary by machine and network conditions.
+packages). Each tool installs into a fresh project tree with `install` plus
+`--prefer-dist`, `--no-interaction`, `--no-progress`, `--no-plugins`,
+`--no-scripts`, and `--no-ansi`; Riff also uses `--no-audit` because Composer
+does not audit on install by default. Cold runs retain neither package archives
+nor repository metadata. Warm runs retain only package archives from an untimed
+install. Riff's PHP platform facts are primed before timing and retained in both
+scenarios, while repository metadata is never carried between timed runs. The
+tools alternate which one runs first on each iteration.
+
+The raw samples, exact versions, and cache policy are recorded in
+[`docs/assets/symfony-demo-install.json`](docs/assets/symfony-demo-install.json).
+Reproduce the benchmark and chart with `mise run benchmark`. Cold-cache results
+will vary with machine and network conditions.
 
 ## Install with Homebrew
 
