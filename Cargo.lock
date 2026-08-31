@@ -2305,7 +2305,7 @@ dependencies = [
 
 [[package]]
 name = "riff"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2336,7 +2336,7 @@ dependencies = [
 
 [[package]]
 name = "riff-core"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2390,7 +2390,7 @@ dependencies = [
 
 [[package]]
 name = "riff-semver"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "criterion",
  "lazy_static",
@@ -2400,7 +2400,7 @@ dependencies = [
 
 [[package]]
 name = "riff-spdx"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "lazy_static",
  "regex",
