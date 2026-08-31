@@ -44,6 +44,9 @@ urlencoding = "2"
 usage-rs = { version = "6", features = ["completions"] }
 wait-timeout = "0.2"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"

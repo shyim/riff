@@ -7,6 +7,7 @@ mod env;
 mod install;
 pub mod platform;
 mod remove;
+mod startup;
 mod update;
 
 use std::ffi::OsString;
@@ -224,6 +225,7 @@ pub fn run() -> i32 {
     };
     output = output.with_options(options);
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+    startup::raise_nofile_limit();
     if let Some(command_name) = invocation.telemetry_command_name() {
         log::debug!(target: "riff::telemetry", "command={command_name}");
     }
