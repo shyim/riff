@@ -31,6 +31,7 @@ const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(600);
 // Bump when Package conversion semantics or this cache envelope changes.
 const PARSED_PACKAGE_CACHE_VERSION: u8 = 2;
 const FILTERED_PACKAGE_CACHE_VERSION: u8 = 4;
+const POLICY_METADATA_CACHE_VERSION: u8 = 1;
 
 /// Result from conditional HTTP request
 enum FetchResult {
@@ -221,6 +222,8 @@ pub struct ComposerRepository {
     security_advisories: RwLock<BTreeMap<String, Vec<Value>>>,
     /// Raw per-package filter metadata, evaluated against the active pool.
     package_filter_metadata: RwLock<BTreeMap<String, Value>>,
+    /// Package responses whose policy fields have been captured, including empty fields.
+    policy_metadata_loaded: RwLock<HashSet<String>>,
     /// User repository-level filter-list opt-outs.
     user_filter_config: Value,
     /// Whether we're in degraded mode (network issues but using cache)
@@ -283,6 +286,7 @@ impl ComposerRepository {
             security_advisory_information: RwLock::new(None),
             security_advisories: RwLock::new(BTreeMap::new()),
             package_filter_metadata: RwLock::new(BTreeMap::new()),
+            policy_metadata_loaded: RwLock::new(HashSet::new()),
             user_filter_config: serde_json::json!({}),
             degraded_mode: RwLock::new(false),
             packages_not_found: RwLock::new(HashSet::new()),
@@ -393,6 +397,14 @@ impl ComposerRepository {
             "{}.filtered-v{}.rkyv",
             Self::cache_key(package_name),
             FILTERED_PACKAGE_CACHE_VERSION
+        )
+    }
+
+    fn policy_cache_key(package_name: &str) -> String {
+        format!(
+            "{}.policy-v{}.json",
+            Self::cache_key(package_name),
+            POLICY_METADATA_CACHE_VERSION
         )
     }
 
@@ -1148,32 +1160,134 @@ impl ComposerRepository {
         Ok(result)
     }
 
-    async fn capture_package_policy_metadata(&self, package_name: &str, body: &[u8]) {
-        let Ok(document) = serde_json::from_slice::<Value>(body) else {
-            return;
+    /// Read policy fields without materializing every historical package version.
+    /// Only fresh HTTP cache entries qualify; stale or missing data still follows
+    /// the normal repository loading and conditional-request/error paths.
+    async fn load_package_policy_metadata(&self, package_name: &str) -> Result<(), String> {
+        let name = package_name.to_lowercase();
+        self.load_root_server_file().await.ok();
+        if self.packages_not_found.read().await.contains(&name)
+            || (*self.has_available_package_list.read().await
+                && !self.lazy_providers_repo_contains(&name).await)
+        {
+            return Ok(());
+        }
+        if self.policy_metadata_loaded.read().await.contains(&name) {
+            return Ok(());
+        }
+        if let Some(cache) = &self.file_cache {
+            let key = Self::cache_key(&name);
+            if let Ok(Some(digest)) = cache.fresh_content_sha256(&key, self.cache_ttl) {
+                if let Ok(Some(bytes)) = cache.read_data(&Self::policy_cache_key(&name)) {
+                    if let Ok(cached) = serde_json::from_slice::<CachedPolicyMetadata>(&bytes) {
+                        if cached.version == POLICY_METADATA_CACHE_VERSION
+                            && cached.source_sha256 == digest
+                        {
+                            self.apply_package_policy_metadata(&name, cached.metadata)
+                                .await;
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+            if cache
+                .age(&key)
+                .ok()
+                .flatten()
+                .is_some_and(|age| age < self.cache_ttl)
+            {
+                if let Ok(Some((body, _))) = cache.read(&key) {
+                    if self.capture_package_policy_metadata(&name, &body).await {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        self.load_package_metadata(&name).await?;
+        Ok(())
+    }
+
+    async fn capture_package_policy_metadata(&self, package_name: &str, body: &[u8]) -> bool {
+        // A projected Serde struct also accepts sequences. Repository responses
+        // must be objects, so malformed cached roots still use the error path.
+        if body.iter().find(|byte| !byte.is_ascii_whitespace()) != Some(&b'{') {
+            return false;
+        }
+        // Unknown fields (especially `packages`) are scanned but never allocated.
+        // The fallback retains the previous last-value-wins behavior for duplicate
+        // JSON keys.
+        let metadata = serde_json::from_slice::<PackagePolicyResponse>(body)
+            .ok()
+            .map(|response| PackagePolicyMetadata {
+                filter: response.filter,
+                security_advisories: response.security_advisories,
+            })
+            .or_else(|| {
+                let document: Value = serde_json::from_slice(body).ok()?;
+                let packages = document.get("packages")?.as_object()?;
+                if !packages.values().all(Value::is_array) {
+                    return None;
+                }
+                Some(PackagePolicyMetadata {
+                    filter: document.get("filter").cloned().unwrap_or_default(),
+                    security_advisories: document
+                        .get("security-advisories")
+                        .cloned()
+                        .unwrap_or_default(),
+                })
+            });
+        let Some(metadata) = metadata else {
+            return false;
         };
-        if let Some(filter) = document.get("filter").filter(|value| value.is_object()) {
+        if let Some(cache) = &self.file_cache {
+            let cached = CachedPolicyMetadata {
+                version: POLICY_METADATA_CACHE_VERSION,
+                source_sha256: Sha256::digest(body).into(),
+                metadata,
+            };
+            if let Ok(bytes) = serde_json::to_vec(&cached) {
+                let _ = cache.write_data(&Self::policy_cache_key(package_name), &bytes);
+            }
+            self.apply_package_policy_metadata(package_name, cached.metadata)
+                .await;
+        } else {
+            self.apply_package_policy_metadata(package_name, metadata)
+                .await;
+        }
+        true
+    }
+
+    async fn apply_package_policy_metadata(
+        &self,
+        package_name: &str,
+        metadata: PackagePolicyMetadata,
+    ) {
+        if metadata.filter.is_object() {
             self.package_filter_metadata
                 .write()
                 .await
-                .insert(package_name.to_string(), filter.clone());
+                .insert(package_name.to_string(), metadata.filter);
         }
 
-        let Some(raw) = document.get("security-advisories") else {
-            return;
-        };
         let mut captured = BTreeMap::<String, Vec<Value>>::new();
-        if let Some(entries) = raw.as_array() {
-            captured.insert(package_name.to_string(), entries.clone());
-        } else if let Some(packages) = raw.as_object() {
-            for (name, entries) in packages {
-                let Some(entries) = entries.as_array() else {
-                    continue;
-                };
-                captured.insert(name.clone(), entries.clone());
+        match metadata.security_advisories {
+            Value::Array(entries) => {
+                captured.insert(package_name.to_string(), entries);
             }
+            Value::Object(packages) => {
+                for (name, entries) in packages {
+                    if let Value::Array(entries) = entries {
+                        captured.insert(name, entries);
+                    }
+                }
+            }
+            _ => {}
         }
         self.security_advisories.write().await.extend(captured);
+        self.policy_metadata_loaded
+            .write()
+            .await
+            .insert(package_name.to_string());
     }
 
     fn read_parsed_package_cache(
@@ -1827,7 +1941,7 @@ impl ComposerRepository {
         let mut advisories = Vec::new();
         if information.metadata && (allow_partial || information.api_url.is_none()) {
             for package in package_versions.keys() {
-                self.load_package_metadata(package).await?;
+                self.load_package_policy_metadata(package).await?;
             }
             let metadata = self.security_advisories.read().await;
             for (package, entries) in metadata.iter() {
@@ -1990,7 +2104,7 @@ impl ComposerRepository {
             package_versions.clone()
         };
         for package in packages_to_load.keys() {
-            self.load_package_metadata(package).await?;
+            self.load_package_policy_metadata(package).await?;
         }
 
         let metadata = self.package_filter_metadata.read().await;
@@ -2490,6 +2604,34 @@ struct PackagistResponse {
     packages: HashMap<String, Vec<Value>>,
     #[serde(default)]
     minified: Option<String>,
+}
+
+/// Validate the response envelope while scanning package versions without allocating
+/// their contents. `IgnoredAny` is zero-sized, so version arrays need no backing buffer.
+#[derive(Deserialize)]
+struct PackagePolicyResponse {
+    #[serde(rename = "packages")]
+    _packages: HashMap<String, Vec<serde::de::IgnoredAny>>,
+    #[serde(default)]
+    filter: Value,
+    #[serde(default, rename = "security-advisories")]
+    security_advisories: Value,
+}
+
+/// Only policy fields are persisted in the derived cache.
+#[derive(Deserialize, Serialize)]
+struct PackagePolicyMetadata {
+    #[serde(default)]
+    filter: Value,
+    #[serde(default, rename = "security-advisories")]
+    security_advisories: Value,
+}
+
+#[derive(Deserialize, Serialize)]
+struct CachedPolicyMetadata {
+    version: u8,
+    source_sha256: [u8; 32],
+    metadata: PackagePolicyMetadata,
 }
 
 #[derive(Deserialize)]
@@ -3747,6 +3889,291 @@ mod tests {
 
         assert_eq!(packages.len(), 1);
         assert_eq!(packages[0].license.as_slice(), ["MIT"]);
+    }
+
+    async fn policy_cache_repository(cache_dir: &std::path::Path) -> ComposerRepository {
+        let repo = ComposerRepository::with_cache(
+            "fixture",
+            "http://127.0.0.1:1",
+            cache_dir.to_path_buf(),
+        );
+        *repo.root_loaded.write().await = true;
+        *repo.security_advisory_information.write().await = Some(SecurityAdvisoryInformation {
+            metadata: true,
+            api_url: None,
+        });
+        repo
+    }
+
+    fn policy_response(id: &str) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "packages": {"vendor/package": [{"version": "1.0.0"}]},
+            "security-advisories": [{"advisoryId": id, "affectedVersions": "<2.0"}],
+            "filter": {"malware": [{"constraint": "<2.0", "id": "test-malware"}]}
+        }))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn policy_cache_preserves_advisories_without_loading_package_versions() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let repo = policy_cache_repository(temp.path()).await;
+        let body = policy_response("PKSA-test");
+        repo.file_cache
+            .as_ref()
+            .unwrap()
+            .write(
+                &ComposerRepository::cache_key("vendor/package"),
+                &body,
+                &CacheMetadata::default(),
+            )
+            .unwrap();
+        let versions = package_versions(&[("vendor/package", &["1.0.0"])]);
+        // First load builds the policy projection; a new repository uses its disk cache.
+        for _ in 0..2 {
+            let repo = policy_cache_repository(temp.path()).await;
+            let advisories = repo
+                .matching_security_advisories(&versions, true)
+                .await
+                .unwrap();
+            assert_eq!(advisories.len(), 1);
+            assert_eq!(advisories[0].advisory_id, "PKSA-test");
+            assert!(repo.packages.read().await.is_empty());
+            assert_eq!(
+                repo.package_filter_metadata.read().await["vendor/package"],
+                serde_json::json!({"malware": [{"constraint": "<2.0", "id": "test-malware"}]})
+            );
+            *repo.filter_information.write().await =
+                Some(repository_filter_information(None, None));
+            let filters = repo
+                .matching_filter_entries(&versions, &["malware".to_owned()])
+                .await
+                .unwrap();
+            assert_eq!(filters["malware"].len(), 1);
+            assert_eq!(filters["malware"][0].id.as_deref(), Some("test-malware"));
+            // Cached partial advisories must still fail the full-advisory validation.
+            assert!(repo
+                .matching_security_advisories(&versions, false)
+                .await
+                .is_err());
+            let unaffected = package_versions(&[("vendor/package", &["2.0.0"])]);
+            assert!(repo
+                .matching_security_advisories(&unaffected, true)
+                .await
+                .unwrap()
+                .is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn policy_cache_rebuilds_corrupt_and_source_mismatched_projections() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let repo = policy_cache_repository(temp.path()).await;
+        let cache = repo.file_cache.as_ref().unwrap();
+        let key = ComposerRepository::cache_key("vendor/package");
+        cache
+            .write(
+                &key,
+                &policy_response("PKSA-old"),
+                &CacheMetadata::default(),
+            )
+            .unwrap();
+        repo.load_package_policy_metadata("vendor/package")
+            .await
+            .unwrap();
+        cache
+            .write(
+                &key,
+                &policy_response("PKSA-new"),
+                &CacheMetadata::default(),
+            )
+            .unwrap();
+        let versions = package_versions(&[("vendor/package", &["1.0.0"])]);
+        for corrupt in [false, true] {
+            if corrupt {
+                cache
+                    .write_data(
+                        &ComposerRepository::policy_cache_key("vendor/package"),
+                        b"broken",
+                    )
+                    .unwrap();
+            }
+            let repo = policy_cache_repository(temp.path()).await;
+            let advisories = repo
+                .matching_security_advisories(&versions, true)
+                .await
+                .unwrap();
+            assert_eq!(advisories.len(), 1);
+            assert_eq!(advisories[0].advisory_id, "PKSA-new");
+            assert!(repo.packages.read().await.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn policy_cache_never_uses_projection_without_fresh_source() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let repo = policy_cache_repository(temp.path()).await;
+        // An orphaned sidecar must not suppress a failed repository request.
+        repo.capture_package_policy_metadata("vendor/package", &policy_response("PKSA-test"))
+            .await;
+        let fresh = policy_cache_repository(temp.path()).await;
+        assert!(fresh
+            .load_package_policy_metadata("vendor/package")
+            .await
+            .is_err());
+
+        // Expired metadata follows the existing fetch path. With no Last-Modified,
+        // the original path surfaces the connection error rather than using a sidecar.
+        fresh
+            .file_cache
+            .as_ref()
+            .unwrap()
+            .write(
+                &ComposerRepository::cache_key("vendor/package"),
+                &policy_response("PKSA-test"),
+                &CacheMetadata::default(),
+            )
+            .unwrap();
+        let mut expired = policy_cache_repository(temp.path()).await;
+        expired.set_cache_ttl(Duration::ZERO);
+        assert!(expired
+            .load_package_policy_metadata("vendor/package")
+            .await
+            .is_err());
+
+        fresh
+            .file_cache
+            .as_ref()
+            .unwrap()
+            .write(
+                &ComposerRepository::cache_key("vendor/package"),
+                b"[]",
+                &CacheMetadata::default(),
+            )
+            .unwrap();
+        let malformed = policy_cache_repository(temp.path()).await;
+        assert!(malformed
+            .load_package_policy_metadata("vendor/package")
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn policy_projection_preserves_empty_missing_map_and_duplicate_fields() {
+        let repo = ComposerRepository::new("fixture", "http://127.0.0.1:1");
+        for malformed in [
+            b"{}".as_slice(),
+            br#"{"packages":[]}"#,
+            br#"{"packages":{"vendor/package":{}}}"#,
+            br#"[{"malware":[]},[]]"#,
+        ] {
+            assert!(
+                !repo
+                    .capture_package_policy_metadata("vendor/package", malformed)
+                    .await
+            );
+        }
+        for body in [
+            br#"{"packages":{},"security-advisories":[]}"#.as_slice(),
+            br#"{"packages":{},"security-advisories":{"vendor/package":[],"other/package":[{"advisoryId":"PKSA-other"}],"invalid":42}}"#,
+            br#"{"packages":{},"filter":{"old":{}},"filter":{"new":{}},"security-advisories":null,"security-advisories":[]}"#,
+            br#"{"packages":{}}"#,
+        ] {
+            let repo = ComposerRepository::new("fixture", "http://127.0.0.1:1");
+            assert!(repo.capture_package_policy_metadata("vendor/package", body).await);
+            let original: Value = serde_json::from_slice(body).unwrap();
+            let mut expected = BTreeMap::new();
+            if let Some(entries) = original.get("security-advisories").and_then(Value::as_array) {
+                expected.insert("vendor/package".to_owned(), entries.clone());
+            } else if let Some(entries) = original.get("security-advisories").and_then(Value::as_object) {
+                for (name, entries) in entries {
+                    if let Some(entries) = entries.as_array() {
+                        expected.insert(name.clone(), entries.clone());
+                    }
+                }
+            }
+            assert_eq!(*repo.security_advisories.read().await, expected);
+            assert_eq!(repo.package_filter_metadata.read().await.get("vendor/package"),
+                original.get("filter").filter(|value| value.is_object()));
+            assert!(repo.policy_metadata_loaded.read().await.contains("vendor/package"));
+        }
+    }
+
+    #[tokio::test]
+    async fn policy_cache_distinguishes_empty_advisories_from_missing_metadata() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let versions = package_versions(&[("vendor/package", &["1.0.0"])]);
+        for (body, known_empty) in [
+            (
+                br#"{"packages":{},"security-advisories":[]}"#.as_slice(),
+                true,
+            ),
+            (br#"{"packages":{}}"#.as_slice(), false),
+        ] {
+            let repo = policy_cache_repository(temp.path()).await;
+            repo.file_cache
+                .as_ref()
+                .unwrap()
+                .write(
+                    &ComposerRepository::cache_key("vendor/package"),
+                    body,
+                    &CacheMetadata::default(),
+                )
+                .unwrap();
+            // An explicit empty array avoids an API fallback; an absent field
+            // must still request the API (which deliberately fails in this test).
+            for _ in 0..2 {
+                let repo = policy_cache_repository(temp.path()).await;
+                repo.security_advisory_information
+                    .write()
+                    .await
+                    .as_mut()
+                    .unwrap()
+                    .api_url = Some("http://127.0.0.1:1/advisories".to_owned());
+                let result = repo.matching_security_advisories(&versions, true).await;
+                if known_empty {
+                    assert!(result.unwrap().is_empty());
+                } else {
+                    assert!(result.is_err());
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn policy_cache_refreshes_expired_source_before_using_advisories() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let repo = policy_cache_repository(temp.path()).await;
+        repo.file_cache
+            .as_ref()
+            .unwrap()
+            .write(
+                &ComposerRepository::cache_key("vendor/package"),
+                &policy_response("PKSA-old"),
+                &CacheMetadata {
+                    last_modified: Some("old".to_owned()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        repo.load_package_policy_metadata("vendor/package")
+            .await
+            .unwrap();
+        let response_path = temp.path().join("response.json");
+        std::fs::write(&response_path, policy_response("PKSA-new")).unwrap();
+        let mut expired = policy_cache_repository(temp.path()).await;
+        expired.set_cache_ttl(Duration::ZERO);
+        *expired.lazy_providers_url.write().await =
+            Some(format!("file://{}", response_path.display()));
+        let advisories = expired
+            .matching_security_advisories(
+                &package_versions(&[("vendor/package", &["1.0.0"])]),
+                true,
+            )
+            .await
+            .unwrap();
+        assert_eq!(advisories.len(), 1);
+        assert_eq!(advisories[0].advisory_id, "PKSA-new");
     }
 
     #[tokio::test]
