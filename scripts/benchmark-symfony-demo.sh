@@ -73,6 +73,11 @@ riff_version="$("$RIFF_BIN" --version | awk '{print $2}')"
 composer_version="$("$COMPOSER_BIN" --version --no-ansi | awk 'NR == 1 {print $3}')"
 php_version="$("$PHP_BIN" -r 'echo PHP_VERSION;')"
 riff_commit="$(git -C "$REPO_DIR" rev-parse HEAD)"
+riff_binary_sha256="$("$PHP_BIN" -r 'echo hash_file("sha256", $argv[1]);' "$RIFF_BIN")"
+riff_worktree_dirty=false
+if [[ -n "$(git -C "$REPO_DIR" status --porcelain --untracked-files=normal)" ]]; then
+	riff_worktree_dirty=true
+fi
 hyperfine_version="$(hyperfine --version | awk '{print $2}')"
 system="$(uname -srm)"
 cpu="$(awk -F ':' '/model name/ { value = $2; sub(/^[[:space:]]+/, "", value); print value; exit }' /proc/cpuinfo 2>/dev/null || true)"
@@ -281,6 +286,8 @@ jq -n \
 	--arg composer "$composer_version" \
 	--arg riff "$riff_version" \
 	--arg riff_commit "$riff_commit" \
+	--arg riff_binary_sha256 "$riff_binary_sha256" \
+	--argjson riff_worktree_dirty "$riff_worktree_dirty" \
 	--arg hyperfine "$hyperfine_version" \
 	--arg system "$system" \
 	--arg cpu "$cpu" \
@@ -307,6 +314,8 @@ jq -n \
 			composer: $composer,
 			riff: $riff,
 			riff_commit: $riff_commit,
+			riff_binary_sha256: $riff_binary_sha256,
+			riff_worktree_dirty: $riff_worktree_dirty,
 			hyperfine: $hyperfine,
 			system: $system,
 			cpu: $cpu

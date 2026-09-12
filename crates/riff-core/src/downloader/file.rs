@@ -80,6 +80,25 @@ pub struct FileDownloader {
 }
 
 impl FileDownloader {
+    pub(crate) async fn download_zip(
+        &self,
+        url: &str,
+        cache_path: &Path,
+        destination: &Path,
+        checksum: Option<(ChecksumType, &str)>,
+        permit: tokio::sync::OwnedSemaphorePermit,
+    ) -> Result<()> {
+        super::stream::download_zip(
+            &self.http_client,
+            url,
+            cache_path,
+            destination,
+            checksum,
+            permit,
+        )
+        .await
+    }
+
     /// Create a new file downloader
     pub fn new(http_client: Arc<HttpClient>) -> Self {
         Self { http_client }

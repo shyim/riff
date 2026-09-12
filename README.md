@@ -37,21 +37,25 @@ or execute an `@php` project script.
 
 ![Symfony Demo install benchmark](docs/assets/symfony-demo-install.svg)
 
-These are local wall-clock medians measured using
-[`symfony/demo`](https://github.com/symfony/demo) at commit `920d86d` (153
-packages). Each tool installs into a fresh project tree with `install` plus
-`--prefer-dist`, `--no-interaction`, `--no-progress`, `--no-plugins`,
-`--no-scripts`, and `--no-ansi`; Riff also uses `--no-audit` because Composer
+These local wall-clock medians were measured on 2026-09-12 with a Riff 0.0.7
+development build including the ZIP optimizations, Composer 2.10.3, and PHP
+8.5.10. The fixture is [`symfony/demo`](https://github.com/symfony/demo) at
+commit `920d86d` (153 packages). Each tool installs into a fresh project tree
+with `install` plus `--prefer-dist`, `--no-interaction`, `--no-progress`,
+`--no-plugins`, `--no-scripts`, and `--no-ansi`; Riff also uses `--no-audit` because Composer
 does not audit on install by default. Cold runs retain neither package archives
 nor repository metadata. Warm runs retain only package archives from an untimed
 install. Riff's PHP platform facts are primed before timing and retained in both
 scenarios, while repository metadata is never carried between timed runs. The
 tools alternate which one runs first on each iteration.
 
-The raw samples, exact versions, and cache policy are recorded in
+The raw samples, versions, Riff binary hash, and cache policy are recorded in
 [`docs/assets/symfony-demo-install.json`](docs/assets/symfony-demo-install.json).
 Reproduce the benchmark and chart with `mise run benchmark`. Cold-cache results
 will vary with machine and network conditions.
+
+See the [ZIP extraction benchmark report](profiles/zip-extraction.md) for
+before/after measurements of the ZIP optimizations and their memory tradeoffs.
 
 ## Install with Homebrew
 

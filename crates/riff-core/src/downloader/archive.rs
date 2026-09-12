@@ -3,14 +3,81 @@
 use flate2::read::GzDecoder;
 use std::collections::HashSet;
 use std::fs::File;
-use std::io::{BufReader, Cursor, Read, Seek};
+use std::io::{self, BufReader, Cursor, Read, Seek, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::{Result, RiffError};
 
 // ZIP readers seek repeatedly while extracting. Buffer small archives in memory
 // to avoid that syscall overhead while keeping concurrent memory use bounded.
 const MAX_IN_MEMORY_ZIP_SIZE: u64 = 4 * 1024 * 1024;
+
+// Larger decoder output chunks substantially reduce writes for large members.
+// Allocate once per archive, including when most of its members are small.
+pub(super) const ZIP_COPY_BUFFER_SIZE: usize = 64 * 1024;
+
+pub(super) fn copy_zip_entry(
+    reader: &mut impl Read,
+    writer: &mut impl Write,
+    buffer: &mut [u8],
+    cancelled: Option<&AtomicBool>,
+) -> io::Result<()> {
+    loop {
+        check_cancelled(cancelled)?;
+        let read = match reader.read(buffer) {
+            Ok(0) => return Ok(()),
+            Ok(read) => read,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+        writer.write_all(&buffer[..read])?;
+    }
+}
+
+pub(super) fn check_cancelled(cancelled: Option<&AtomicBool>) -> io::Result<()> {
+    if cancelled.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+        Err(io::Error::new(
+            io::ErrorKind::ConnectionAborted,
+            "Archive extraction cancelled",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+/// Prefix removal must not turn a previously enclosed path into an escaping one.
+pub(super) fn validate_zip_relative_path(path: &Path) -> Result<()> {
+    use std::path::Component;
+    let mut depth = 0usize;
+    for component in path.components() {
+        match component {
+            Component::Normal(_) => depth += 1,
+            Component::CurDir => {}
+            Component::ParentDir if depth > 0 => depth -= 1,
+            _ => {
+                return Err(RiffError::InstallationFailed(format!(
+                    "Path traversal detected in archive: {}",
+                    path.display()
+                )))
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn set_zip_permissions(file: &zip::read::ZipFile<'_>, path: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Some(mode) = file.unix_mode() {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))?;
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = (file, path);
+    Ok(())
+}
 
 /// Rewrite generated GitHub and Bitbucket distribution URLs to download the
 /// package's selected reference. Other URLs, and packages without a reference,
@@ -231,12 +298,20 @@ impl ArchiveExtractor {
 
     /// Extract a zip archive
     fn extract_zip(archive_path: &Path, dest_dir: &Path) -> Result<()> {
+        Self::extract_zip_cancellable(archive_path, dest_dir, None)
+    }
+
+    pub(super) fn extract_zip_cancellable(
+        archive_path: &Path,
+        dest_dir: &Path,
+        cancelled: Option<&AtomicBool>,
+    ) -> Result<()> {
         let result = if archive_path.metadata()?.len() <= MAX_IN_MEMORY_ZIP_SIZE {
             let bytes = std::fs::read(archive_path)?;
-            Self::extract_zip_reader(Cursor::new(bytes), dest_dir)
+            Self::extract_zip_reader(Cursor::new(bytes), dest_dir, cancelled)
         } else {
             let file = File::open(archive_path)?;
-            Self::extract_zip_reader(BufReader::new(file), dest_dir)
+            Self::extract_zip_reader(BufReader::new(file), dest_dir, cancelled)
         };
         result.map_err(|error| {
             RiffError::InstallationFailed(format!(
@@ -261,7 +336,11 @@ impl ArchiveExtractor {
         }
     }
 
-    fn extract_zip_reader<R: Read + Seek>(reader: R, dest_dir: &Path) -> Result<()> {
+    fn extract_zip_reader<R: Read + Seek>(
+        reader: R,
+        dest_dir: &Path,
+        cancelled: Option<&AtomicBool>,
+    ) -> Result<()> {
         let mut archive = zip::ZipArchive::new(reader)
             .map_err(|e| RiffError::InstallationFailed(format!("Failed to open zip: {}", e)))?;
 
@@ -271,8 +350,10 @@ impl ArchiveExtractor {
         let common_prefix = Self::find_zip_common_prefix(&archive);
         let mut created_directories = HashSet::new();
         created_directories.insert(dest_dir.to_path_buf());
+        let mut copy_buffer = vec![0; ZIP_COPY_BUFFER_SIZE];
 
         for i in 0..archive.len() {
+            check_cancelled(cancelled)?;
             let mut file = archive.by_index(i).map_err(|e| {
                 RiffError::InstallationFailed(format!("Failed to read zip entry: {}", e))
             })?;
@@ -290,6 +371,7 @@ impl ArchiveExtractor {
             } else {
                 &enclosed_path
             };
+            validate_zip_relative_path(relative_path)?;
 
             // Skip empty paths
             if relative_path.as_os_str().is_empty() {
@@ -308,23 +390,18 @@ impl ArchiveExtractor {
                 // Already created above.
             } else {
                 let mut outfile = File::create(&outpath)?;
-                std::io::copy(&mut file, &mut outfile)?;
+                copy_zip_entry(&mut file, &mut outfile, &mut copy_buffer, cancelled)?;
 
-                // Set permissions on Unix
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    if let Some(mode) = file.unix_mode() {
-                        std::fs::set_permissions(&outpath, std::fs::Permissions::from_mode(mode))?;
-                    }
-                }
+                set_zip_permissions(&file, &outpath)?;
             }
         }
 
         Ok(())
     }
 
-    fn validate_zip_entry_names<R: Read + Seek>(archive: &zip::ZipArchive<R>) -> Result<()> {
+    pub(super) fn validate_zip_entry_names<R: Read + Seek>(
+        archive: &zip::ZipArchive<R>,
+    ) -> Result<()> {
         let mut names = std::collections::HashMap::<String, String>::new();
         for index in 0..archive.len() {
             let Some(name) = archive.name_for_index(index) else {
@@ -349,7 +426,10 @@ impl ArchiveExtractor {
     /// Archives commonly omit explicit directory entries, so every file still
     /// needs its parent prepared. Remembering directories avoids issuing a
     /// recursive mkdir sequence for every sibling file.
-    fn create_zip_directory(path: &Path, created_directories: &mut HashSet<PathBuf>) -> Result<()> {
+    pub(super) fn create_zip_directory(
+        path: &Path,
+        created_directories: &mut HashSet<PathBuf>,
+    ) -> Result<()> {
         if created_directories.insert(path.to_path_buf()) {
             std::fs::create_dir_all(path)?;
         }
@@ -357,7 +437,9 @@ impl ArchiveExtractor {
     }
 
     /// Find common prefix in zip archive (e.g., vendor-package-hash/)
-    fn find_zip_common_prefix<R: Read + Seek>(archive: &zip::ZipArchive<R>) -> Option<String> {
+    pub(super) fn find_zip_common_prefix<R: Read + Seek>(
+        archive: &zip::ZipArchive<R>,
+    ) -> Option<String> {
         if archive.is_empty() {
             return None;
         }
@@ -870,6 +952,50 @@ mod tests {
 
         assert!(result.is_err());
         assert!(!temp.path().join("escaped.php").exists());
+    }
+
+    #[test]
+    fn zip_prefix_removal_cannot_expose_parent_traversal() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("prefix.zip");
+        let mut archive = zip::ZipWriter::new(File::create(&path).unwrap());
+        archive
+            .start_file(
+                "package/../escaped.php",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        archive.write_all(b"escaped").unwrap();
+        archive.finish().unwrap();
+        assert!(ArchiveExtractor::extract(&path, &temp.path().join("dest")).is_err());
+        assert!(!temp.path().join("escaped.php").exists());
+    }
+
+    #[test]
+    fn zip_copy_checks_crc_after_multiple_output_buffers() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("crc.zip");
+        let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        archive
+            .start_file(
+                "large.bin",
+                zip::write::SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Stored),
+            )
+            .unwrap();
+        archive
+            .write_all(&vec![b'x'; ZIP_COPY_BUFFER_SIZE * 3 + 17])
+            .unwrap();
+        let mut bytes = archive.finish().unwrap().into_inner();
+        let offset = {
+            let mut archive = zip::ZipArchive::new(Cursor::new(&bytes)).unwrap();
+            let file = archive.by_index(0).unwrap();
+            file.data_start() + file.size() - 1
+        };
+        bytes[offset as usize] ^= 1;
+        std::fs::write(&path, bytes).unwrap();
+        let error = ArchiveExtractor::extract(&path, &temp.path().join("dest")).unwrap_err();
+        assert!(error.to_string().contains("checksum"), "{error}");
     }
 
     #[test]

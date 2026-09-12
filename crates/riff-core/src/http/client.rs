@@ -207,7 +207,7 @@ impl HttpClient {
         self.get_with_accept_encoding(url, "gzip", options).await
     }
 
-    async fn get_with_accept_encoding(
+    pub(crate) async fn get_with_accept_encoding(
         &self,
         url: &str,
         accept_encoding: &'static str,

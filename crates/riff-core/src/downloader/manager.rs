@@ -432,6 +432,15 @@ impl DownloadManager {
     }
 
     async fn cache_dist_archive(&self, package: &Package, dist: &Dist) -> Result<(PathBuf, bool)> {
+        self.prepare_dist_archive(package, dist, None).await
+    }
+
+    async fn prepare_dist_archive(
+        &self,
+        package: &Package,
+        dist: &Dist,
+        destination: Option<&Path>,
+    ) -> Result<(PathBuf, bool)> {
         let cache_file = self.cache_path(package, &dist.dist_type);
         if let Some(parent) = cache_file.parent() {
             tokio::fs::create_dir_all(parent).await?;
@@ -451,6 +460,9 @@ impl DownloadManager {
                 true
             };
             if valid {
+                if let Some(destination) = destination {
+                    self.extract_archive(&cache_file, destination).await?;
+                }
                 return Ok((cache_file, true));
             }
             let _ = tokio::fs::remove_file(&cache_file).await;
@@ -458,6 +470,22 @@ impl DownloadManager {
 
         for url in dist.urls() {
             let url = process_dist_url(&url, dist.reference.as_deref());
+            // Stream when a worker is available. Otherwise keep downloading to
+            // cache: the extraction limit must not reduce HTTP concurrency.
+            let extraction_permit =
+                if destination.is_some() && dist.dist_type.eq_ignore_ascii_case("zip") {
+                    match self.shared.extraction_semaphore.clone().try_acquire_owned() {
+                        Ok(permit) => Some(permit),
+                        Err(tokio::sync::TryAcquireError::NoPermits) => None,
+                        Err(error) => {
+                            return Err(RiffError::InstallationFailed(format!(
+                                "Archive extraction scheduler failed: {error}"
+                            )))
+                        }
+                    }
+                } else {
+                    None
+                };
             let _download_permit =
                 self.shared
                     .download_semaphore
@@ -467,6 +495,37 @@ impl DownloadManager {
                         package: package.name.clone(),
                         reason: format!("Download scheduler failed: {error}"),
                     })?;
+            if let (Some(destination), Some(permit)) = (destination, extraction_permit) {
+                let checksum = checksum.map(|expected| {
+                    (
+                        ChecksumType::from_hex_length(expected.len())
+                            .unwrap_or(ChecksumType::Sha256),
+                        expected.as_str(),
+                    )
+                });
+                match self
+                    .file_downloader
+                    .download_zip(&url, &cache_file, destination, checksum, permit)
+                    .await
+                {
+                    Ok(()) => return Ok((cache_file, false)),
+                    Err(RiffError::ChecksumMismatch { .. }) => {
+                        return Err(RiffError::ChecksumMismatch {
+                            package: package.name.clone(),
+                        })
+                    }
+                    Err(error @ RiffError::DownloadFailed { .. }) => {
+                        crate::warnln!(
+                            self.output,
+                            "Warning: Failed to download from {}: {}",
+                            url,
+                            error
+                        );
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
             if let Err(error) = self
                 .file_downloader
                 .download(&url, &cache_file, None::<fn(u64, u64)>)
@@ -480,6 +539,7 @@ impl DownloadManager {
                 );
                 continue;
             }
+            drop(_download_permit);
             if let Some(checksum) = checksum {
                 let checksum_type =
                     ChecksumType::from_hex_length(checksum.len()).unwrap_or(ChecksumType::Sha256);
@@ -489,6 +549,9 @@ impl DownloadManager {
                         package: package.name.clone(),
                     });
                 }
+            }
+            if let Some(destination) = destination {
+                self.extract_archive(&cache_file, destination).await?;
             }
             return Ok((cache_file, false));
         }
@@ -506,8 +569,9 @@ impl DownloadManager {
         dist: &Dist,
         dest_dir: &Path,
     ) -> Result<bool> {
-        let (cache_file, from_cache) = self.cache_dist_archive(package, dist).await?;
-        self.extract_archive(&cache_file, dest_dir).await?;
+        let (_, from_cache) = self
+            .prepare_dist_archive(package, dist, Some(dest_dir))
+            .await?;
         Ok(from_cache)
     }
 
@@ -628,10 +692,11 @@ impl DownloadManager {
 
     /// Extract an archive to destination
     async fn extract_archive(&self, archive_path: &Path, dest_dir: &Path) -> Result<()> {
-        let _permit = self
+        let permit = self
             .shared
             .extraction_semaphore
-            .acquire()
+            .clone()
+            .acquire_owned()
             .await
             .map_err(|error| {
                 RiffError::InstallationFailed(format!(
@@ -642,6 +707,7 @@ impl DownloadManager {
         let dest_dir = dest_dir.to_path_buf();
 
         tokio::task::spawn_blocking(move || {
+            let _permit = permit;
             Self::extract_archive_blocking(&archive_path, &dest_dir)
         })
         .await
@@ -1659,5 +1725,39 @@ mod tests {
             destination.canonicalize().unwrap(),
             source.canonicalize().unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn busy_extraction_slots_do_not_block_other_downloads() {
+        let directory = TempDir::new().unwrap();
+        let mut manager = test_manager(&directory, false, true);
+        manager.shared = SharedDownloadResources::new(2, 1);
+        let occupied = manager
+            .shared
+            .extraction_semaphore
+            .clone()
+            .try_acquire_owned()
+            .unwrap();
+        let (url, server) = serve_once("200 OK", zip_bytes("package/file.php", b"contents"));
+        let mut package = Package::new("vendor/package", "1.0.0");
+        package.dist = Some(Dist::zip(url));
+        let cache = manager.cache_path(&package, "zip");
+        let download = tokio::spawn(async move { manager.download(&package).await });
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !cache.exists() {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(!download.is_finished());
+        drop(occupied);
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), download)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(fs::read(result.path.join("file.php")).unwrap(), b"contents");
+        server.join().unwrap();
     }
 }

@@ -9,6 +9,7 @@ mod file;
 mod git;
 mod manager;
 mod path;
+mod stream;
 mod vcs;
 
 pub use archive::{ArchiveExtractor, ArchiveType};

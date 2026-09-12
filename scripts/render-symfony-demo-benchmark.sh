@@ -47,8 +47,9 @@ bar_width() {
 }
 
 speedup() {
-	local slower=$1 faster=$2
-	awk -v slower="$slower" -v faster="$faster" 'BEGIN { printf "%.2f", slower / faster }'
+	local phase=$1
+	jq -r --arg phase "$phase" '.results[$phase] | .composer.median_ms / .riff.median_ms' "$RESULTS_JSON" \
+		| awk '{ printf "%.2f", $1 }'
 }
 
 label_position() {
@@ -83,8 +84,8 @@ read -r cold_composer_label cold_composer_anchor <<<"$(label_position "$cold_com
 read -r cold_riff_label cold_riff_anchor <<<"$(label_position "$cold_riff_width")"
 read -r warm_composer_label warm_composer_anchor <<<"$(label_position "$warm_composer_width")"
 read -r warm_riff_label warm_riff_anchor <<<"$(label_position "$warm_riff_width")"
-cold_speedup="$(speedup "$cold_composer" "$cold_riff")"
-warm_speedup="$(speedup "$warm_composer" "$warm_riff")"
+cold_speedup="$(speedup cold)"
+warm_speedup="$(speedup warm)"
 
 mkdir -p "$(dirname "$OUTPUT_SVG")"
 temporary_svg="$(mktemp "${OUTPUT_SVG}.XXXXXX")"

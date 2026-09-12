@@ -3,7 +3,6 @@
 use md5::Md5;
 use sha2::{Digest, Sha256, Sha384, Sha512};
 use std::path::Path;
-use tokio::io::AsyncReadExt;
 
 use crate::Result;
 
@@ -31,72 +30,92 @@ impl ChecksumType {
     }
 }
 
-/// Verify checksum of a file
+/// Incremental archive checksum, shared by cached reads and streaming downloads.
+pub(super) enum ChecksumHasher {
+    Sha1(sha1::Sha1),
+    Sha256(Sha256),
+    Sha384(Sha384),
+    Sha512(Sha512),
+    Md5(Md5),
+}
+
+impl ChecksumHasher {
+    pub(super) fn new(kind: ChecksumType) -> Self {
+        match kind {
+            ChecksumType::Sha1 => Self::Sha1(sha1::Sha1::new()),
+            ChecksumType::Sha256 => Self::Sha256(Sha256::new()),
+            ChecksumType::Sha384 => Self::Sha384(Sha384::new()),
+            ChecksumType::Sha512 => Self::Sha512(Sha512::new()),
+            ChecksumType::Md5 => Self::Md5(Md5::new()),
+        }
+    }
+
+    pub(super) fn update(&mut self, bytes: &[u8]) {
+        match self {
+            Self::Sha1(hash) => hash.update(bytes),
+            Self::Sha256(hash) => hash.update(bytes),
+            Self::Sha384(hash) => hash.update(bytes),
+            Self::Sha512(hash) => hash.update(bytes),
+            Self::Md5(hash) => hash.update(bytes),
+        }
+    }
+
+    pub(super) fn finish(self) -> String {
+        match self {
+            Self::Sha1(hash) => format!("{:x}", hash.finalize()),
+            Self::Sha256(hash) => format!("{:x}", hash.finalize()),
+            Self::Sha384(hash) => format!("{:x}", hash.finalize()),
+            Self::Sha512(hash) => format!("{:x}", hash.finalize()),
+            Self::Md5(hash) => format!("{:x}", hash.finalize()),
+        }
+    }
+}
+
+/// Verify checksum of a file without buffering the entire archive in memory.
 pub async fn verify_checksum(
     path: &Path,
     expected: &str,
     checksum_type: ChecksumType,
 ) -> Result<bool> {
-    let mut file = tokio::fs::File::open(path).await?;
-    let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer).await?;
-
-    let actual = match checksum_type {
-        ChecksumType::Sha1 => {
-            use sha1::{Digest as Sha1Digest, Sha1};
-            let mut hasher = Sha1::new();
-            hasher.update(&buffer);
-            format!("{:x}", hasher.finalize())
-        }
-        ChecksumType::Sha256 => {
-            let mut hasher = Sha256::new();
-            hasher.update(&buffer);
-            format!("{:x}", hasher.finalize())
-        }
-        ChecksumType::Sha384 => {
-            let mut hasher = Sha384::new();
-            hasher.update(&buffer);
-            format!("{:x}", hasher.finalize())
-        }
-        ChecksumType::Sha512 => {
-            let mut hasher = Sha512::new();
-            hasher.update(&buffer);
-            format!("{:x}", hasher.finalize())
-        }
-        ChecksumType::Md5 => {
-            let mut hasher = Md5::new();
-            hasher.update(&buffer);
-            format!("{:x}", hasher.finalize())
-        }
-    };
-
-    Ok(actual.eq_ignore_ascii_case(expected))
+    Ok(compute_checksum(path, checksum_type)
+        .await?
+        .eq_ignore_ascii_case(expected))
 }
 
-/// Compute SHA-256 checksum of a file
+async fn compute_checksum(path: &Path, checksum_type: ChecksumType) -> Result<String> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        use std::io::Read;
+        let mut file = std::fs::File::open(path)?;
+        let mut buffer = vec![0; super::archive::ZIP_COPY_BUFFER_SIZE];
+        let mut hasher = ChecksumHasher::new(checksum_type);
+        loop {
+            let read = match file.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(read) => read,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error.into()),
+            };
+            hasher.update(&buffer[..read]);
+        }
+        Ok(hasher.finish())
+    })
+    .await
+    .map_err(|error| {
+        crate::RiffError::InstallationFailed(format!("Checksum task failed: {error}"))
+    })?
+}
+
+/// Compute SHA-256 checksum of a file.
 #[allow(dead_code)]
 pub async fn compute_sha256(path: &Path) -> Result<String> {
-    let mut file = tokio::fs::File::open(path).await?;
-    let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer).await?;
-
-    let mut hasher = Sha256::new();
-    hasher.update(&buffer);
-    Ok(format!("{:x}", hasher.finalize()))
+    compute_checksum(path, ChecksumType::Sha256).await
 }
 
-/// Compute SHA-1 checksum of a file
+/// Compute SHA-1 checksum of a file.
 #[allow(dead_code)]
 pub async fn compute_sha1(path: &Path) -> Result<String> {
-    use sha1::{Digest as Sha1Digest, Sha1};
-
-    let mut file = tokio::fs::File::open(path).await?;
-    let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer).await?;
-
-    let mut hasher = Sha1::new();
-    hasher.update(&buffer);
-    Ok(format!("{:x}", hasher.finalize()))
+    compute_checksum(path, ChecksumType::Sha1).await
 }
 
 #[cfg(test)]
@@ -175,5 +194,23 @@ mod tests {
             hash,
             "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
         );
+    }
+
+    #[tokio::test]
+    async fn cached_checksums_match_known_vectors_across_buffer_boundaries() {
+        let file = NamedTempFile::new().unwrap();
+        let mut bytes: Vec<u8> = (0..262144).map(|index| (index % 256) as u8).collect();
+        bytes.extend_from_slice(b"tail");
+        std::fs::write(file.path(), bytes).unwrap();
+        // Independently generated with Python hashlib for bytes(range(256))*1024+b"tail".
+        for (kind, expected) in [
+            (ChecksumType::Sha1, "94a0a2acae0b357ada003f336e466ac0224039ba"),
+            (ChecksumType::Sha256, "145a2cf50dd668b2e895180d6455a0ef930907876cb5a53c36de2ceadb081d01"),
+            (ChecksumType::Sha384, "9ededf14929c5cd099e65008dae525d4738cc1b06e81dcf8e37337a621a6e1537b0a1e85ecc31baeaa71727a50e6e0d7"),
+            (ChecksumType::Sha512, "e10a0887e9e2e2db1ad38f2f0d47a756506441b7c0770c3b1fefbbc25ffaefe043235853c6df1b0f5845e400cee151ea2682caa73b1e9aa851e40ab23a4e1810"),
+            (ChecksumType::Md5, "1eb50f84dbd78044c79bb5e19dd34270"),
+        ] {
+            assert!(verify_checksum(file.path(), &expected.to_uppercase(), kind).await.unwrap());
+        }
     }
 }
