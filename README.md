@@ -1,6 +1,7 @@
 # Riff
 
 [![CI](https://github.com/shyim/riff/actions/workflows/ci.yml/badge.svg)](https://github.com/shyim/riff/actions/workflows/ci.yml)
+[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://app.codspeed.io/shyim/riff?utm_source=badge)
 
 Riff is a fast, standalone Composer-compatible package manager written in
 Rust. It resolves dependencies, downloads packages, installs them, generates

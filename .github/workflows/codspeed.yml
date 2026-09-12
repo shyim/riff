@@ -1,0 +1,44 @@
+name: CodSpeed
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  benchmarks:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # Required for OpenID Connect authentication with CodSpeed.
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: codspeed
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install cargo-codspeed
+        run: cargo install cargo-codspeed --locked
+      - name: Build the benchmark targets
+        run: cargo codspeed build --workspace --locked --measurement-mode simulation
+      - name: Run the benchmarks
+        uses: CodSpeedHQ/action@373d6868929f444bc08d901fd0eb0ad52a8875ea # v5.2.1
+        with:
+          mode: simulation
+          run: cargo codspeed run
