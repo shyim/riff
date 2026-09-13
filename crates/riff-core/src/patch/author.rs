@@ -880,7 +880,7 @@ fn tree_digest(root: &Path) -> Result<String> {
         }
         hasher.update([0xff]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(hex::encode(hasher.finalize()))
 }
 
 fn read_optional(path: &Path) -> Result<Option<Vec<u8>>> {

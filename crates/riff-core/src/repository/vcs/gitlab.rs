@@ -264,7 +264,7 @@ impl GitLabDriver {
 
     fn send_api_url(&self, url: &str) -> Result<GitLabApiResponse, VcsDriverError> {
         let client = reqwest::blocking::Client::builder()
-            .danger_accept_invalid_certs(!self.request_options.verify_tls)
+            .tls_danger_accept_invalid_certs(!self.request_options.verify_tls)
             .build()
             .map_err(|error| VcsDriverError::Network(error.to_string()))?;
         let mut request = client.get(url);

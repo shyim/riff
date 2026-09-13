@@ -681,7 +681,7 @@ fn cache_key(url: &str) -> String {
     if key.len() <= 140 {
         key
     } else {
-        format!("{:x}", Md5::digest(url.as_bytes()))
+        hex::encode(Md5::digest(url.as_bytes()))
     }
 }
 

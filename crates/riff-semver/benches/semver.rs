@@ -1,6 +1,7 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use riff_semver::constraint::php_version_compare;
 use riff_semver::{Semver, VersionParser};
+use std::hint::black_box;
 
 fn bench_php_version_compare(c: &mut Criterion) {
     let cases = [

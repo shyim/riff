@@ -624,7 +624,7 @@ impl RiffLockfile {
 
         let mut hasher = Md5::new();
         hasher.update(manifest_content.as_bytes());
-        self.legacy_hash == format!("{:x}", hasher.finalize())
+        self.legacy_hash == hex::encode(hasher.finalize())
     }
 }
 
@@ -1076,7 +1076,7 @@ mod tests {
         hasher.update(COMPOSER_MANIFEST.as_bytes());
         let lock = RiffLockfile::from_str(
             &serde_json::json!({
-                "hash": format!("{:x}", hasher.finalize()),
+                "hash": hex::encode(hasher.finalize()),
                 "packages": []
             })
             .to_string(),

@@ -1255,7 +1255,7 @@ async fn sha256_file(path: &Path) -> anyhow::Result<String> {
         }
         hasher.update(&buffer[..read]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(hex::encode(hasher.finalize()))
 }
 
 fn cache_patch_atomically(source: &Path, destination: &Path) -> anyhow::Result<()> {
@@ -1336,7 +1336,7 @@ fn composer_collection_hash(patches: &Value) -> anyhow::Result<String> {
     let collection = Value::Object(Map::from_iter([("patches".to_string(), patches.clone())]));
     let mut encoded = String::new();
     encode_php_json(&collection, &mut encoded)?;
-    Ok(format!("{:x}", Sha256::digest(encoded.as_bytes())))
+    Ok(hex::encode(Sha256::digest(encoded.as_bytes())))
 }
 
 fn encode_php_json(value: &Value, output: &mut String) -> anyhow::Result<()> {
@@ -1494,7 +1494,7 @@ impl PackageInstallHook for PreparedPatchSet {
                     }
                     hasher.update([0xff]);
                 }
-                (package.clone(), format!("{:x}", hasher.finalize()))
+                (package.clone(), hex::encode(hasher.finalize()))
             })
             .collect()
     }
@@ -2105,7 +2105,7 @@ mod tests {
         assert_eq!(lock["patches"]["vendor/package"][0]["depth"], 1);
         assert_eq!(
             lock["patches"]["vendor/package"][0]["sha256"],
-            format!("{:x}", Sha256::digest(patch.as_bytes()))
+            hex::encode(Sha256::digest(patch.as_bytes()))
         );
 
         let install_path = directory.path().join("vendor/vendor/package");
@@ -2205,7 +2205,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             lock["patches"]["vendor/package"][0]["sha256"],
-            format!("{:x}", Sha256::digest(patch))
+            hex::encode(Sha256::digest(patch))
         );
     }
 }

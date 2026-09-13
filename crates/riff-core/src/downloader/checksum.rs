@@ -62,11 +62,11 @@ impl ChecksumHasher {
 
     pub(super) fn finish(self) -> String {
         match self {
-            Self::Sha1(hash) => format!("{:x}", hash.finalize()),
-            Self::Sha256(hash) => format!("{:x}", hash.finalize()),
-            Self::Sha384(hash) => format!("{:x}", hash.finalize()),
-            Self::Sha512(hash) => format!("{:x}", hash.finalize()),
-            Self::Md5(hash) => format!("{:x}", hash.finalize()),
+            Self::Sha1(hash) => hex::encode(hash.finalize()),
+            Self::Sha256(hash) => hex::encode(hash.finalize()),
+            Self::Sha384(hash) => hex::encode(hash.finalize()),
+            Self::Sha512(hash) => hex::encode(hash.finalize()),
+            Self::Md5(hash) => hex::encode(hash.finalize()),
         }
     }
 }

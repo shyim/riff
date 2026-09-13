@@ -142,7 +142,8 @@ fn invalid_archives_clean_staging_and_preserve_existing_installations() {
         .unwrap()
         .by_index(0)
         .unwrap()
-        .data_start() as usize;
+        .data_start()
+        .unwrap() as usize;
     corrupt[data_start] ^= 1;
     let mut invalid = vec![corrupt, valid[..valid.len() - 22].to_vec()];
     for entries in [

@@ -55,7 +55,7 @@ impl FileDownloadRequest {
             .as_deref()
             .unwrap_or(&self.processed_url);
         let digest = Sha1::digest(material.as_bytes());
-        format!("{package_name}/{digest:x}.")
+        format!("{package_name}/{}.", hex::encode(digest))
     }
 }
 
@@ -445,7 +445,10 @@ mod tests {
         assert_eq!(fs::read(destination).unwrap(), b"processed");
         assert_eq!(
             request.cache_key("dummy/pkg"),
-            format!("dummy/pkg/{:x}.", Sha1::digest(processed_url.as_bytes()))
+            format!(
+                "dummy/pkg/{}.",
+                hex::encode(Sha1::digest(processed_url.as_bytes()))
+            )
         );
     }
 
@@ -456,7 +459,7 @@ mod tests {
 
         assert_eq!(
             request.cache_key("dummy/pkg"),
-            format!("dummy/pkg/{:x}.", Sha1::digest(b"xyzzy"))
+            format!("dummy/pkg/{}.", hex::encode(Sha1::digest(b"xyzzy")))
         );
     }
 

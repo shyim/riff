@@ -66,7 +66,10 @@ pub(super) fn validate_zip_relative_path(path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn set_zip_permissions(file: &zip::read::ZipFile<'_>, path: &Path) -> io::Result<()> {
+pub(super) fn set_zip_permissions<R: Read + ?Sized>(
+    file: &zip::read::ZipFile<'_, R>,
+    path: &Path,
+) -> io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -403,10 +406,18 @@ impl ArchiveExtractor {
         archive: &zip::ZipArchive<R>,
     ) -> Result<()> {
         let mut names = std::collections::HashMap::<String, String>::new();
+        let common_prefix = Self::find_zip_common_prefix(archive);
         for index in 0..archive.len() {
             let Some(name) = archive.name_for_index(index) else {
                 continue;
             };
+            // ZIP's enclosed_name normalizes parent components. Check the raw
+            // name first so removing the package prefix cannot hide traversal.
+            let relative_name = common_prefix
+                .as_ref()
+                .and_then(|prefix| name.strip_prefix(prefix))
+                .unwrap_or(name);
+            validate_zip_relative_path(Path::new(relative_name))?;
             let normalized = name.replace('\\', "/").trim_end_matches('/').to_lowercase();
             if let Some(previous) = names.get(&normalized) {
                 if previous != name {
@@ -990,7 +1001,7 @@ mod tests {
         let offset = {
             let mut archive = zip::ZipArchive::new(Cursor::new(&bytes)).unwrap();
             let file = archive.by_index(0).unwrap();
-            file.data_start() + file.size() - 1
+            file.data_start().unwrap() + file.size() - 1
         };
         bytes[offset as usize] ^= 1;
         std::fs::write(&path, bytes).unwrap();

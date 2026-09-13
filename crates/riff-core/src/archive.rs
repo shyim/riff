@@ -150,7 +150,7 @@ pub fn package_archive_filename_parts(
         .as_ref()
         .map(|source| source.reference.as_str())
     {
-        let digest = format!("{:x}", Sha1::digest(reference.as_bytes()));
+        let digest = hex::encode(Sha1::digest(reference.as_bytes()));
         parts.push(("source_reference", digest[..6].to_owned()));
     }
 

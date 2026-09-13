@@ -368,7 +368,7 @@ fn validate_streamed_entries(
         })?;
         if file.name() != entry.name
             || file.header_start() != entry.header_start
-            || file.data_start() != entry.data_start
+            || file.data_start() != Some(entry.data_start)
             || file.compressed_size() != entry.compressed_size
             || file.size() != entry.size
             || file.crc32() != entry.crc32

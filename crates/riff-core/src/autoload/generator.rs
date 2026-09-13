@@ -444,7 +444,7 @@ impl AutoloadGenerator {
             // Generate a random suffix if none provided
             let mut hasher = Md5::new();
             hasher.update(format!("{:?}", std::time::SystemTime::now()).as_bytes());
-            format!("{:x}", hasher.finalize())[..16].to_string()
+            hex::encode(hasher.finalize())[..16].to_string()
         })
     }
 
@@ -1723,7 +1723,7 @@ __RIFF_PLATFORM_CHECKS__if ($issues) {
     fn compute_file_identifier(package_name: &str, path: &str) -> String {
         let mut hasher = Md5::new();
         hasher.update(format!("{}:{}", package_name, path).as_bytes());
-        format!("{:x}", hasher.finalize())
+        hex::encode(hasher.finalize())
     }
 
     /// Generate vendor/composer/installed.php

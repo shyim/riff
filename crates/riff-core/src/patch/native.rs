@@ -289,14 +289,14 @@ fn sha256_file(path: &Path) -> Result<String> {
     let bytes = fs::read(path)?;
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(hex::encode(hasher.finalize()))
 }
 
 fn lock_hash(patches: &BTreeMap<String, NativePatchLockEntry>) -> Result<String> {
     let canonical = serde_json::to_vec(patches)?;
     let mut hasher = Sha256::new();
     hasher.update(canonical);
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(hex::encode(hasher.finalize()))
 }
 
 #[cfg(test)]

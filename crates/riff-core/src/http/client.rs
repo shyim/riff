@@ -164,7 +164,7 @@ impl HttpClient {
         if let Some(cafile) = &config.cafile {
             if let Ok(cert_bytes) = std::fs::read(cafile) {
                 if let Ok(cert) = reqwest::Certificate::from_pem(&cert_bytes) {
-                    builder = builder.add_root_certificate(cert);
+                    builder = builder.tls_certs_merge([cert]);
                 }
             }
         }
