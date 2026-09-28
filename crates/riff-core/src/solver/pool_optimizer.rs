@@ -11,6 +11,7 @@
 
 use foldhash::{HashMap, HashMapExt};
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::sync::Arc;
 use std::time::Instant;
@@ -1126,24 +1127,46 @@ impl<'a> PoolOptimizer<'a> {
             }
         }
 
+        // Materialize each inventory only if a member survived. Multiple retained
+        // packages can share it, including tied versions and virtual providers.
+        let mut group_versions = vec![None; self.version_inventory_groups.len()];
         for (old_id, new_id) in old_to_new {
             let mut versions = original_pool
-                .removed_versions_by_package(old_id)
-                .cloned()
-                .unwrap_or_default();
+                .removed_versions_by_package_shared(old_id)
+                .cloned();
             if let Some(group_ids) = self.version_inventory_memberships.get(&old_id) {
                 for &group_id in group_ids {
-                    for &member_id in &self.version_inventory_groups[group_id] {
-                        if let Some(entry) = original_pool.entry(member_id) {
-                            versions.insert(
-                                entry.version().to_owned(),
-                                entry.pretty_version().to_owned(),
-                            );
-                        }
+                    let group = group_versions[group_id].get_or_insert_with(|| {
+                        // Bulk construction sorts once instead of searching the
+                        // tree for every version, retaining the last duplicate.
+                        let inventory = self.version_inventory_groups[group_id]
+                            .iter()
+                            .filter_map(|&member_id| original_pool.entry(member_id))
+                            .map(|entry| {
+                                (
+                                    entry.version().to_owned(),
+                                    entry.pretty_version().to_owned(),
+                                )
+                            })
+                            .collect::<BTreeMap<_, _>>();
+                        Arc::new(inventory)
+                    });
+                    if let Some(versions) = versions.as_mut() {
+                        // Preserve membership order and last-value-wins pretty
+                        // versions without mutating another package's inventory.
+                        Arc::make_mut(versions).extend(
+                            group
+                                .iter()
+                                .map(|(version, pretty)| (version.clone(), pretty.clone())),
+                        );
+                    } else {
+                        versions = Some(Arc::clone(group));
                     }
                 }
             }
-            new_pool.set_removed_versions_by_package(new_id, versions);
+            if let Some(versions) = versions {
+                new_pool.set_removed_versions_by_package(new_id, versions);
+            }
         }
 
         new_pool
@@ -1543,6 +1566,61 @@ mod tests {
 
         assert_eq!(optimized_versions(false), ["1.1.0"]);
         assert_eq!(optimized_versions(true), ["1.0.0"]);
+    }
+
+    #[test]
+    fn overlapping_inventories_preserve_merge_order_without_mutating_shared_groups() {
+        let mut pool = Pool::new();
+        let a = pool.add_package(Package::new("vendor/a", "1.0.0"));
+        let mut b = Package::new("vendor/b", "1.1.0");
+        b.pretty_version = Some("first".into());
+        let b = pool.add_package(b);
+        let mut c = Package::new("vendor/c", "1.1.0");
+        c.pretty_version = Some("last".into());
+        let c = pool.add_package(c);
+        let d = pool.add_package(Package::new("vendor/d", "2.0.0"));
+        let previous = Arc::new(BTreeMap::from([
+            ("0.9.0".into(), "legacy".into()),
+            ("1.1.0".into(), "prior".into()),
+        ]));
+        pool.set_removed_versions_by_package(a, Arc::clone(&previous));
+
+        let policy = Policy::new();
+        let mut optimizer = PoolOptimizer::new(&policy);
+        optimizer.record_version_inventory_group(vec![a, b]);
+        optimizer.record_version_inventory_group(vec![a, c, d]);
+        let optimized = optimizer.apply_removals_to_pool(&pool);
+
+        assert_eq!(
+            optimized.removed_versions_by_package(a).unwrap(),
+            &BTreeMap::from([
+                ("0.9.0".into(), "legacy".into()),
+                ("1.0.0".into(), "1.0.0".into()),
+                ("1.1.0".into(), "last".into()),
+                ("2.0.0".into(), "2.0.0".into()),
+            ])
+        );
+        assert_eq!(
+            optimized.removed_versions_by_package(b).unwrap(),
+            &BTreeMap::from([
+                ("1.0.0".into(), "1.0.0".into()),
+                ("1.1.0".into(), "first".into()),
+            ])
+        );
+        assert_eq!(
+            optimized.removed_versions_by_package(c).unwrap(),
+            &BTreeMap::from([
+                ("1.0.0".into(), "1.0.0".into()),
+                ("1.1.0".into(), "last".into()),
+                ("2.0.0".into(), "2.0.0".into()),
+            ])
+        );
+        assert!(std::ptr::eq(
+            optimized.removed_versions_by_package(c).unwrap(),
+            optimized.removed_versions_by_package(d).unwrap(),
+        ));
+        assert_eq!(pool.removed_versions_by_package(a), Some(previous.as_ref()));
+        assert_eq!(previous["1.1.0"], "prior");
     }
 
     #[test]

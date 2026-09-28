@@ -125,7 +125,7 @@ pub struct Pool {
     filter_list_removed_versions: HashMap<String, HashMap<String, Vec<FilterListEntry>>>,
 
     /// Version inventories collapsed into each retained package by pool optimization.
-    removed_versions_by_package: HashMap<PackageId, BTreeMap<String, String>>,
+    removed_versions_by_package: HashMap<PackageId, Arc<BTreeMap<String, String>>>,
 }
 
 impl std::fmt::Debug for Pool {
@@ -215,7 +215,7 @@ impl Pool {
     pub(crate) fn set_removed_versions_by_package(
         &mut self,
         package_id: PackageId,
-        versions: BTreeMap<String, String>,
+        versions: Arc<BTreeMap<String, String>>,
     ) {
         if !versions.is_empty() {
             self.removed_versions_by_package
@@ -228,6 +228,14 @@ impl Pool {
         &self,
         package_id: PackageId,
     ) -> Option<&BTreeMap<String, String>> {
+        self.removed_versions_by_package_shared(package_id)
+            .map(Arc::as_ref)
+    }
+
+    pub(crate) fn removed_versions_by_package_shared(
+        &self,
+        package_id: PackageId,
+    ) -> Option<&Arc<BTreeMap<String, String>>> {
         self.removed_versions_by_package.get(&package_id)
     }
 
