@@ -144,3 +144,18 @@ To finish porting another Composer installer fixture:
 The harness compares logical install/update/remove operations, selected lock
 packages and requested metadata subsets. This keeps tests stable across harmless
 output and extra lock metadata differences.
+
+## Composer 2.11 regressions
+
+Run the core security, archive, authentication, and platform-matcher regressions:
+
+```sh
+cargo test -p riff-core --test composer_211
+```
+
+Command regressions cover config mutations, inferred requirements, strict PSR exit
+codes, generated files, and post-autoload script ordering:
+
+```sh
+cargo test -p riff --test config_command --test require_command --test strict_psr_command
+```

@@ -16,6 +16,7 @@ const BOOL_CONFIG_KEYS: &[&str] = &[
     "notify-on-install",
     "sort-packages",
     "optimize-autoloader",
+    "strict-psr-autoloader",
     "classmap-authoritative",
     "apcu-autoloader",
     "prepend-autoloader",
@@ -579,6 +580,7 @@ const DEFAULT_CONFIG_JSON: &str = r#"{
     "autoloader-suffix": null,
     "sort-packages": false,
     "optimize-autoloader": false,
+    "strict-psr-autoloader": false,
     "classmap-authoritative": false,
     "apcu-autoloader": false,
     "prepend-autoloader": true,
@@ -999,9 +1001,14 @@ fn read_setting(
     }
 
     if setting_key.contains('.') {
-        let mut bits: Vec<&str> = setting_key.split('.').collect();
-        let root = bits[0];
-        let (data, source_path) = if root == "extra" || root == "suggest" {
+        let root = setting_key.split('.').next().unwrap();
+        let property = matches!(root, "extra" | "suggest" | "scripts");
+        let mut bits = if property {
+            property_path(setting_key)
+        } else {
+            setting_key.split('.').collect()
+        };
+        let (data, source_path) = if property {
             (selected, bits.clone())
         } else {
             bits.insert(0, "config");
@@ -1010,7 +1017,7 @@ fn read_setting(
         let value = nested(data, &bits)
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("{setting_key} is not defined."))?;
-        let source = if root == "extra" || root == "suggest" {
+        let source = if property {
             files.source_name.clone()
         } else {
             source_at(&merged.sources, &source_path)
@@ -1233,7 +1240,11 @@ fn source_leaf(source: Option<&Value>) -> Option<&str> {
 fn source_at<'a>(sources: &'a Map<String, Value>, path: &[&str]) -> Option<&'a str> {
     let mut current = sources.get(*path.first()?)?;
     for key in &path[1..] {
-        current = current.get(*key)?;
+        current = if let Some(array) = current.as_array() {
+            array.get(key.parse::<usize>().ok()?)?
+        } else {
+            current.get(*key)?
+        };
     }
     source_leaf(Some(current))
 }
@@ -1277,7 +1288,7 @@ fn unset_setting(key: &str, document: &mut Value, files: &ConfigFiles) -> Result
         path.extend(key.split('.'));
         remove_nested(document, &path, false);
     } else {
-        let path: Vec<&str> = key.split('.').collect();
+        let path = property_path(key);
         remove_nested(document, &path, false);
     }
     Ok(())
@@ -1348,13 +1359,13 @@ fn set_setting(
         return Ok(());
     }
 
-    if let Some(path) = key.strip_prefix("scripts.") {
+    if key.starts_with("scripts.") {
         let value = if values.len() == 1 {
             Value::String(values[0].clone())
         } else {
             Value::Array(values.iter().cloned().map(Value::String).collect())
         };
-        set_nested(document, &["scripts", path], value);
+        set_nested(document, &property_path(key), value);
         return Ok(());
     }
     if let Some(path) = key.strip_prefix("suggest.") {
@@ -1365,14 +1376,13 @@ fn set_setting(
         );
         return Ok(());
     }
-    if let Some(path) = key.strip_prefix("extra.") {
+    if key.starts_with("extra.") {
         let mut value = if args.json {
             parse_json_argument(values)?
         } else {
             Value::String(values.first().cloned().unwrap_or_default())
         };
-        let mut full_path = vec!["extra"];
-        full_path.extend(path.split('.'));
+        let full_path = property_path(key);
         if args.merge {
             if let Some(current) = nested(document, &full_path) {
                 value = merge_json_values(current, &value, key)?;
@@ -1894,10 +1904,27 @@ fn validate_policy_name(key: &str) -> Result<()> {
     Ok(())
 }
 
+fn property_path(key: &str) -> Vec<&str> {
+    let Some((main, rest)) = key.split_once('.') else {
+        return vec![key];
+    };
+    let mut path = vec![main];
+    if matches!(main, "extra" | "scripts") {
+        path.extend(rest.splitn(2, '.'));
+    } else {
+        path.push(rest);
+    }
+    path
+}
+
 fn nested<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
     let mut current = value;
     for key in path {
-        current = current.get(*key)?;
+        current = if let Some(array) = current.as_array() {
+            array.get(key.parse::<usize>().ok()?)?
+        } else {
+            current.get(*key)?
+        };
     }
     Some(current)
 }
@@ -1906,6 +1933,24 @@ fn set_nested(root: &mut Value, path: &[&str], value: Value) {
     if path.is_empty() {
         *root = value;
         return;
+    }
+    if let Some(array) = root.as_array_mut() {
+        if let Ok(index) = path[0].parse::<usize>() {
+            if index <= array.len() {
+                if index == array.len() {
+                    array.push(Value::Null);
+                }
+                set_nested(&mut array[index], &path[1..], value);
+                return;
+            }
+        }
+        *root = Value::Object(
+            std::mem::take(array)
+                .into_iter()
+                .enumerate()
+                .map(|(index, value)| (index.to_string(), value))
+                .collect(),
+        );
     }
     if !root.is_object() {
         *root = Value::Object(Map::new());
@@ -1922,6 +1967,19 @@ fn remove_nested(root: &mut Value, path: &[&str], prune_empty: bool) -> bool {
     let Some((first, rest)) = path.split_first() else {
         return false;
     };
+    if let Some(array) = root.as_array_mut() {
+        let Ok(index) = first.parse::<usize>() else {
+            return false;
+        };
+        if index >= array.len() {
+            return false;
+        }
+        if rest.is_empty() {
+            array.remove(index);
+            return true;
+        }
+        return remove_nested(&mut array[index], rest, prune_empty);
+    }
     let Some(object) = root.as_object_mut() else {
         return false;
     };
@@ -1941,6 +1999,40 @@ fn remove_nested(root: &mut Value, path: &[&str], prune_empty: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn composer_211_array_properties_preserve_siblings_and_list_shape() {
+        let mut value = serde_json::json!({"extra":{"items":["first","second"]},"scripts":{"test":["one","two"]}});
+        set_nested(
+            &mut value,
+            &property_path("extra.items.1"),
+            Value::String("changed".into()),
+        );
+        assert_eq!(
+            value["extra"]["items"],
+            serde_json::json!(["first", "changed"])
+        );
+        assert!(remove_nested(
+            &mut value,
+            &property_path("scripts.test.0"),
+            false
+        ));
+        assert_eq!(value["scripts"]["test"], serde_json::json!(["two"]));
+        assert!(remove_nested(
+            &mut value,
+            &property_path("scripts.test.0"),
+            false
+        ));
+        assert_eq!(value["scripts"]["test"], serde_json::json!([]));
+        assert_eq!(
+            property_path("extra.foo.bar.baz"),
+            ["extra", "foo", "bar.baz"]
+        );
+        assert_eq!(
+            property_path("suggest.foo/bar.baz"),
+            ["suggest", "foo/bar.baz"]
+        );
+    }
 
     #[test]
     fn nested_values_round_trip() {

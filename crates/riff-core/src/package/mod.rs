@@ -36,5 +36,6 @@ pub use root_version::{
     VersionGuessCommandOutput, VersionGuessOptions, VersionGuessProcess, VersionGuesser,
     DEFAULT_ROOT_PRETTY_VERSION, DEFAULT_ROOT_VERSION,
 };
+pub(crate) use security::validate_installed_package;
 pub use security::{validate_package_metadata, PackageMetadataError};
 pub use source::{Dist, Mirror, Source};

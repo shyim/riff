@@ -213,6 +213,7 @@ impl UpdateResult {
 #[derive(Debug, Clone, Default)]
 pub struct UpdateOptions {
     pub optimize_autoloader: bool,
+    pub strict_psr_autoloader: bool,
     pub classmap_authoritative: bool,
     pub apcu_autoloader: bool,
     pub apcu_autoloader_prefix: Option<String>,
@@ -240,6 +241,7 @@ pub struct UpdateOptions {
 #[derive(Debug, Clone, Default)]
 pub struct InstallOptions {
     pub optimize_autoloader: bool,
+    pub strict_psr_autoloader: bool,
     pub classmap_authoritative: bool,
     pub apcu_autoloader: bool,
     pub apcu_autoloader_prefix: Option<String>,
@@ -317,7 +319,13 @@ impl Installer {
         self.riff.lockfile.as_ref()
     }
 
-    pub async fn update_with_result(&self, options: UpdateOptions) -> Result<UpdateResult> {
+    pub async fn update_with_result(&self, mut options: UpdateOptions) -> Result<UpdateResult> {
+        options.optimize_autoloader |= self.riff.config.optimize_autoloader;
+        options.classmap_authoritative |= self.riff.config.classmap_authoritative;
+        let strict_psr = options.strict_psr_autoloader || self.riff.config.strict_psr_autoloader;
+        if strict_psr && !(options.optimize_autoloader || options.classmap_authoritative) {
+            anyhow::bail!("--strict-psr-autoloader requires --optimize-autoloader or --classmap-authoritative");
+        }
         let manifest = &self.riff.manifest;
         let working_dir = &self.riff.working_dir;
         let install_config = self.riff.installation_manager.config();
@@ -1697,7 +1705,7 @@ impl Installer {
             };
 
             let generator = configure_platform_check(
-                AutoloadGenerator::new(autoload_config),
+                AutoloadGenerator::new(autoload_config).with_strict_psr(strict_psr),
                 manifest,
                 &package_autoloads,
                 &self.riff.config.platform_check,
@@ -1720,8 +1728,8 @@ impl Installer {
                 dev_mode,
             );
 
-            generator
-                .generate(
+            let generation = generator
+                .generate_with_result(
                     &package_autoloads,
                     root_autoload.as_ref(),
                     Some(&root_package),
@@ -1742,6 +1750,14 @@ impl Installer {
                 if exit_code != 0 {
                     return Ok(UpdateResult::exit(exit_code));
                 }
+            }
+            if !generation.psr_violations.is_empty() {
+                crate::errln!(
+                    self.riff.output(),
+                    "{}",
+                    generation.psr_violations.join("\n")
+                );
+                return Ok(UpdateResult::exit(6));
             }
         }
 
@@ -1793,7 +1809,13 @@ impl Installer {
         })
     }
 
-    pub async fn install(&self, options: InstallOptions) -> Result<i32> {
+    pub async fn install(&self, mut options: InstallOptions) -> Result<i32> {
+        options.optimize_autoloader |= self.riff.config.optimize_autoloader;
+        options.classmap_authoritative |= self.riff.config.classmap_authoritative;
+        let strict_psr = options.strict_psr_autoloader || self.riff.config.strict_psr_autoloader;
+        if strict_psr && !(options.optimize_autoloader || options.classmap_authoritative) {
+            anyhow::bail!("--strict-psr-autoloader requires --optimize-autoloader or --classmap-authoritative");
+        }
         let manifest = &self.riff.manifest;
         let working_dir = &self.riff.working_dir;
         let install_config = self.riff.installation_manager.config();
@@ -2083,7 +2105,7 @@ impl Installer {
             };
 
             let generator = configure_platform_check(
-                AutoloadGenerator::new(autoload_config),
+                AutoloadGenerator::new(autoload_config).with_strict_psr(strict_psr),
                 manifest,
                 &package_autoloads,
                 &self.riff.config.platform_check,
@@ -2103,8 +2125,8 @@ impl Installer {
                 dev_mode,
             );
 
-            generator
-                .generate(
+            let generation = generator
+                .generate_with_result(
                     &package_autoloads,
                     root_autoload.as_ref(),
                     Some(&root_package),
@@ -2125,6 +2147,14 @@ impl Installer {
                 if exit_code != 0 {
                     return Ok(exit_code);
                 }
+            }
+            if !generation.psr_violations.is_empty() {
+                crate::errln!(
+                    self.riff.output(),
+                    "{}",
+                    generation.psr_violations.join("\n")
+                );
+                return Ok(6);
             }
         }
 
@@ -2177,6 +2207,12 @@ impl Installer {
         } = options;
         let manifest = &self.riff.manifest;
         let working_dir = &self.riff.working_dir;
+        let strict_psr = strict_psr || self.riff.config.strict_psr_autoloader;
+        let optimize = optimize || self.riff.config.optimize_autoloader;
+        let authoritative = authoritative || self.riff.config.classmap_authoritative;
+        if strict_psr && !(optimize || authoritative) {
+            anyhow::bail!("--strict-psr requires optimized autoloading");
+        }
         let manager = &self.riff.installation_manager;
 
         // Detect root package version
@@ -2313,6 +2349,9 @@ impl Installer {
             self.riff.dispatch(&event).await?;
         }
 
+        if !result.psr_violations.is_empty() {
+            anyhow::bail!("{}", result.psr_violations.join("\n"));
+        }
         if optimized {
             crate::successln!(
                 self.riff.output(),

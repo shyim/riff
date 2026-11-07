@@ -21,14 +21,28 @@ pub enum PackageMetadataError {
 /// filesystem. Platform packages do not carry downloadable metadata and are
 /// accepted as-is, matching Composer's dependency package validation boundary.
 pub fn validate_package_metadata(package: &Package) -> Result<(), PackageMetadataError> {
-    if is_platform_package(&package.name) {
-        return Ok(());
-    }
-
-    if !is_safe_package_name(&package.name) {
+    let platform =
+        is_platform_package(&package.name) && !package.name.contains(['/', '\\', ':', '\0']);
+    if !platform && !is_safe_package_name(&package.name) {
         return Err(PackageMetadataError::InvalidName(package.name.clone()));
     }
 
+    if !platform && !is_safe_package_name(&package.pretty_name().to_ascii_lowercase()) {
+        return Err(PackageMetadataError::InvalidName(
+            package.pretty_name().to_owned(),
+        ));
+    }
+    if let Some(target) = &package.target_dir {
+        if target.starts_with(['/', '\\'])
+            || target.contains(':')
+            || target.split(['/', '\\']).any(|part| part == "..")
+        {
+            return Err(PackageMetadataError::UnsafeArgument {
+                package: package.name.clone(),
+                field: "target-dir".to_owned(),
+            });
+        }
+    }
     if let Some(source) = &package.source {
         validate_argument(&package.name, "source.url", &source.url)?;
         validate_argument(&package.name, "source.reference", &source.reference)?;
@@ -61,17 +75,23 @@ fn validate_argument(package: &str, field: &str, value: &str) -> Result<(), Pack
     Ok(())
 }
 
+/// Validate installed metadata using the same path and argument checks as repository packages.
+pub(crate) fn validate_installed_package(package: &Package) -> Result<(), PackageMetadataError> {
+    validate_package_metadata(package)
+}
+
 fn is_safe_package_name(name: &str) -> bool {
     let Some((vendor, package)) = name.split_once('/') else {
         return false;
     };
-    !vendor.is_empty()
-        && !package.is_empty()
-        && !name.starts_with('-')
-        && !name.chars().any(char::is_whitespace)
-        && name.bytes().all(|byte| {
-            byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"._-/".contains(&byte)
-        })
+    [vendor, package].iter().all(|part| {
+        part.as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+            && part.bytes().all(|byte| {
+                byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"._-".contains(&byte)
+            })
+    })
 }
 
 #[cfg(test)]

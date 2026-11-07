@@ -274,3 +274,66 @@ fn composer_require_moves_dependencies_between_root_sections() {
         assert_eq!(manifest[target]["required/pkg"], "^1.0");
     }
 }
+
+#[test]
+fn composer_211_require_and_remove_preserve_preexisting_empty_sections() {
+    let project = tempfile::tempdir().unwrap();
+    write_manifest(project.path(), json!({"require-dev":{},"repositories":[]}));
+    command(project.path())
+        .args([
+            "a/b:^1",
+            "--no-update",
+            "--no-interaction",
+            "--no-plugins",
+            "--no-scripts",
+        ])
+        .assert()
+        .success();
+    let manifest = read_manifest(project.path());
+    assert_eq!(manifest["require-dev"], json!({}));
+    assert_eq!(manifest["repositories"], json!([]));
+    Command::cargo_bin("riff")
+        .unwrap()
+        .env("COMPOSER_HOME", project.path().join("composer-home"))
+        .args([
+            "remove",
+            "a/b",
+            "--no-update",
+            "--no-interaction",
+            "--no-plugins",
+            "--no-scripts",
+            "-d",
+        ])
+        .arg(project.path())
+        .assert()
+        .success();
+    let manifest = read_manifest(project.path());
+    assert!(manifest.get("require").is_none());
+    assert_eq!(manifest["require-dev"], json!({}));
+    assert_eq!(manifest["repositories"], json!([]));
+}
+
+#[test]
+fn inferred_path_repository_constraints_use_carets() {
+    for (version, expected) in [("0.1.3", "^0.1.3"), ("0.0.4", "^0.0.4"), ("1.2.3", "^1.2")] {
+        let project = tempfile::tempdir().unwrap();
+        let package = project.path().join("package");
+        fs::create_dir(&package).unwrap();
+        write_manifest(&package, json!({"name":"fixture/tool", "version":version}));
+        write_manifest(
+            project.path(),
+            json!({"repositories": [
+                {"type":"path", "url":"package"}, {"packagist.org":false}
+            ]}),
+        );
+        let output = run(
+            project.path(),
+            &["fixture/tool", "--no-install", "--no-scripts"],
+        );
+        assert!(output.status.success(), "{}", display(&output));
+        assert_eq!(
+            read_manifest(project.path())["require"]["fixture/tool"],
+            expected
+        );
+    }
+}

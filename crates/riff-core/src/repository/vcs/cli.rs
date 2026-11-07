@@ -363,7 +363,7 @@ fn run(command: &mut Command) -> Result<(), VcsDriverError> {
 }
 
 fn output(command: &mut Command) -> Result<String, VcsDriverError> {
-    let description = format!("{command:?}");
+    let description = crate::process::redact_command(&format!("{command:?}"));
     let output = command
         .output()
         .map_err(|error| VcsDriverError::ProcessError(format!("{description}: {error}")))?;
@@ -372,7 +372,7 @@ fn output(command: &mut Command) -> Result<String, VcsDriverError> {
     } else {
         Err(VcsDriverError::ProcessError(format!(
             "{description}: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
+            crate::process::redact_command(String::from_utf8_lossy(&output.stderr).trim())
         )))
     }
 }

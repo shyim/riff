@@ -66,7 +66,10 @@ mod watch_graph;
 mod tests;
 
 pub use decisions::Decisions;
-pub use policy::{package_matches_platform_requirements, recommended_require_constraint, Policy};
+pub use policy::{
+    package_matches_platform_requirements, recommended_require_constraint,
+    PlatformRequirementMatcher, Policy,
+};
 pub use pool::{PackageId, Pool, PoolBuilder, PoolEntry};
 pub use pool_builder::PoolBuilder as LazyPoolBuilder;
 pub use pool_optimizer::PoolOptimizer;

@@ -94,6 +94,33 @@ pub fn write_manifest(path: &Path, json: &RiffManifest) -> Result<(), LoadError>
     write_json_value(path, json, false)
 }
 
+/// Write a dependency mutation while retaining sections that were already empty.
+/// Sections emptied by this operation remain omitted by manifest serialization.
+pub fn write_manifest_update(path: &Path, manifest: &RiffManifest) -> Result<(), LoadError> {
+    let original = if path.exists() {
+        Some(serde_json::from_str::<serde_json::Value>(
+            &fs::read_to_string(path)?,
+        )?)
+    } else {
+        None
+    };
+    let mut value = serde_json::to_value(manifest)?;
+    if let Some(original) = original {
+        for key in ["require", "require-dev", "repositories"] {
+            if let Some(previous) = original.get(key).filter(|value| match value {
+                serde_json::Value::Object(object) => object.is_empty(),
+                serde_json::Value::Array(array) => array.is_empty(),
+                _ => false,
+            }) {
+                if value.get(key).is_none() {
+                    value[key] = previous.clone();
+                }
+            }
+        }
+    }
+    write_json_value(path, &value, true)
+}
+
 /// Encode arbitrary JSON with Composer-style pretty formatting and a final newline.
 pub fn encode_pretty_json<T: serde::Serialize + ?Sized>(
     value: &T,

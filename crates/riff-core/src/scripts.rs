@@ -509,10 +509,9 @@ fn run_command_with_stack(
                 style(script_ref).cyan()
             );
 
-            let mut referenced_args: Vec<String> = inline_args
-                .split_whitespace()
-                .map(ToString::to_string)
-                .collect();
+            let mut referenced_args = shlex::split(inline_args).ok_or_else(|| {
+                anyhow::anyhow!("Invalid quoted arguments for script '{script_ref}'")
+            })?;
             referenced_args.extend(extra_args.iter().cloned());
             script_stack.push(script_ref.to_string());
             let result = (|| {
@@ -552,10 +551,9 @@ fn run_command_with_stack(
                 style(">").green(),
                 style(script_ref).cyan()
             );
-            let mut referenced_args: Vec<String> = inline_args
-                .split_whitespace()
-                .map(ToString::to_string)
-                .collect();
+            let mut referenced_args = shlex::split(inline_args).ok_or_else(|| {
+                anyhow::anyhow!("Invalid quoted arguments for script '{script_ref}'")
+            })?;
             referenced_args.extend(extra_args.iter().cloned());
             return run_object_script(
                 script_ref,
@@ -667,10 +665,9 @@ fn run_command_with_stack_async<'a>(
                     style(">").green(),
                     style(script_ref).cyan()
                 );
-                let mut referenced_args: Vec<String> = inline_args
-                    .split_whitespace()
-                    .map(ToString::to_string)
-                    .collect();
+                let mut referenced_args = shlex::split(inline_args).ok_or_else(|| {
+                    anyhow::anyhow!("Invalid quoted arguments for script '{script_ref}'")
+                })?;
                 referenced_args.extend(extra_args.iter().cloned());
                 script_stack.push(script_ref.to_string());
                 let mut result = Ok(0);
@@ -714,10 +711,9 @@ fn run_command_with_stack_async<'a>(
                     style(">").green(),
                     style(script_ref).cyan()
                 );
-                let mut referenced_args: Vec<String> = inline_args
-                    .split_whitespace()
-                    .map(ToString::to_string)
-                    .collect();
+                let mut referenced_args = shlex::split(inline_args).ok_or_else(|| {
+                    anyhow::anyhow!("Invalid quoted arguments for script '{script_ref}'")
+                })?;
                 referenced_args.extend(extra_args.iter().cloned());
                 return run_object_script(
                     script_ref,
@@ -866,7 +862,16 @@ fn execute_shell_command(
     #[cfg(windows)]
     let mut command = Command::new("cmd");
     #[cfg(windows)]
-    command.arg("/C").arg(cmd);
+    {
+        use std::os::windows::process::CommandExt;
+
+        // cmd.exe does not use C-runtime argument escaping. Pass the already
+        // composed shell expression verbatim, with /S stripping the outer pair
+        // of quotes while preserving quoted executables and PHP -r arguments.
+        command
+            .args(["/D", "/S", "/C"])
+            .raw_arg(format!("\"{cmd}\""));
+    }
 
     command.current_dir(working_dir);
 
@@ -1238,6 +1243,34 @@ mod tests {
             std::fs::read_to_string(directory.path().join("riff-args.txt")).unwrap(),
             format!("--php\n{}\nshow\nvendor/package\n", custom_php.display())
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn composer_211_nested_quoted_arguments_and_composer_arguments_stay_literal() {
+        let directory = tempfile::tempdir().unwrap();
+        let fake_riff = directory.path().join("riff");
+        executable(
+            &fake_riff,
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > riff-args.txt\n",
+        );
+        let runtime = RuntimeContext::new("php".into(), fake_riff);
+        let scripts = HashMap::from([("nested", vec!["@composer show".to_string()])]);
+        let mut context = ScriptContext::new(true, directory.path().join("vendor/bin"));
+        run_command(
+            "@nested 'two words' \"\"",
+            directory.path(),
+            &["; touch injected".into(), "$(touch injected)".into()],
+            &scripts,
+            &mut context,
+            &runtime,
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("riff-args.txt")).unwrap(),
+            "--php\nphp\nshow\ntwo words\n\n; touch injected\n$(touch injected)\n"
+        );
+        assert!(!directory.path().join("injected").exists());
     }
 
     // Ported from Composer\Test\EventDispatcher\EventDispatcherTest::testDispatcherCanPutEnv.

@@ -70,3 +70,45 @@ mod tests {
         assert_eq!(fallback_nofile_limit(16_384, 65_536), 16_384);
     }
 }
+
+pub(crate) fn warn_slow_wsl_cache(output: &riff_core::Output) {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let release = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default();
+    let cache = riff_core::cache::runtime_cache_dir();
+    let cache = cache.canonicalize().unwrap_or(cache);
+    if slow_wsl_cache(&release, &cache) {
+        riff_core::warnln!(output, "Warning: Riff's cache is on a Windows drive under WSL; filesystem operations can be slow. Set RIFF_CACHE_DIR to a path in the Linux filesystem.");
+    }
+}
+
+fn slow_wsl_cache(release: &str, cache: &std::path::Path) -> bool {
+    if !release.to_ascii_lowercase().contains("microsoft") {
+        return false;
+    }
+    let mut parts = cache.components();
+    matches!(parts.next(), Some(std::path::Component::RootDir))
+        && parts.next().is_some_and(|part| part.as_os_str() == "mnt")
+        && parts.next().is_some_and(|part| {
+            let drive = part.as_os_str().to_string_lossy();
+            drive.len() == 1 && drive.as_bytes()[0].is_ascii_alphabetic()
+        })
+}
+
+#[cfg(unix)]
+#[test]
+fn wsl_cache_warning_only_targets_windows_drives() {
+    use std::path::Path;
+    assert!(slow_wsl_cache(
+        "6.6-microsoft-standard-WSL2",
+        Path::new("/mnt/c/cache")
+    ));
+    for (release, path) in [
+        ("linux", "/mnt/c/cache"),
+        ("microsoft", "/home/user/cache"),
+        ("microsoft", "/mnt/cache"),
+    ] {
+        assert!(!slow_wsl_cache(release, Path::new(path)));
+    }
+}

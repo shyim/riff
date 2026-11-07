@@ -171,12 +171,24 @@ impl From<&Package> for LockedPackage {
             time: pkg.time.map(|t| t.to_rfc3339()),
             installation_source: pkg.installation_source.clone(),
             default_branch: pkg.default_branch,
-            transport_options: pkg.transport_options.clone().or_else(|| {
-                pkg.dist
-                    .as_ref()
-                    .and_then(|dist| dist.transport_options.as_ref())
-                    .and_then(|options| serde_json::to_value(options).ok())
-            }),
+            transport_options: pkg
+                .transport_options
+                .clone()
+                .or_else(|| {
+                    pkg.dist
+                        .as_ref()
+                        .and_then(|dist| dist.transport_options.as_ref())
+                        .and_then(|options| serde_json::to_value(options).ok())
+                })
+                .map(|mut options| {
+                    if let Some(http) = options
+                        .get_mut("http")
+                        .and_then(serde_json::Value::as_object_mut)
+                    {
+                        http.remove("header");
+                    }
+                    options
+                }),
             authors: pkg.authors.iter().map(LockAuthor::from).collect(),
             support: pkg
                 .support

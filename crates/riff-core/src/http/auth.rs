@@ -59,6 +59,7 @@ impl AuthenticationHeader {
         let display_name = match name.as_str() {
             "authorization" => "Authorization",
             "private-token" => "PRIVATE-TOKEN",
+            "job-token" => "JOB-TOKEN",
             other => other,
         }
         .to_string();
@@ -121,6 +122,7 @@ pub struct AuthenticationOptions {
     headers: Vec<AuthenticationHeader>,
     client_certificate: Option<ClientCertificateOptions>,
     diagnostic: Option<String>,
+    warning: Option<String>,
 }
 
 impl fmt::Debug for AuthenticationOptions {
@@ -151,6 +153,10 @@ impl AuthenticationOptions {
     }
 
     /// A display-safe explanation suitable for verbose logs.
+    pub fn warning(&self) -> Option<&str> {
+        self.warning.as_deref()
+    }
+
     pub fn diagnostic(&self) -> Option<&str> {
         self.diagnostic.as_deref()
     }
@@ -170,6 +176,7 @@ pub fn authentication_options(
             .collect::<Result<_, _>>()?,
         client_certificate: None,
         diagnostic: None,
+        warning: None,
     };
 
     let Some(origin) = config.find_auth_origin(request_origin) else {
@@ -178,6 +185,18 @@ pub fn authentication_options(
 
     if let Some(credentials) = config.http_basic.get(&origin) {
         add_http_basic_options(&mut options, &origin, url, credentials)?;
+        return Ok(options);
+    }
+    if let Some(headers) = config.custom_headers.get(&origin) {
+        add_http_basic_options(
+            &mut options,
+            &origin,
+            url,
+            &HttpBasicCredentials {
+                username: headers.to_string(),
+                password: "custom-headers".into(),
+            },
+        )?;
         return Ok(options);
     }
     if let Some(token) = config.bearer.get(&origin) {
@@ -198,6 +217,13 @@ pub fn authentication_options(
     }
     if let Some(token) = config.gitlab_token.get(&origin) {
         match token {
+            GitLabAuth::Credentials { username, token } => {
+                if username == "gitlab-ci-token" {
+                    add_gitlab_job_token(&mut options, url, token)?;
+                } else {
+                    add_basic_header(&mut options, username, token)?;
+                }
+            }
             GitLabAuth::OAuth { oauth_token } => {
                 add_header(
                     &mut options,
@@ -240,14 +266,20 @@ fn add_http_basic_options(
     if password == "bearer" {
         add_header(options, "authorization", format!("Bearer {username}"))?;
     } else if password == "custom-headers" {
-        let headers: Vec<String> = serde_json::from_str(username)
-            .map_err(|_| AuthenticationPolicyError::InvalidCustomHeaders)?;
-        for header in headers {
-            options.headers.push(
-                AuthenticationHeader::parse(&header)
-                    .map_err(|_| AuthenticationPolicyError::InvalidCustomHeaders)?,
-            );
-        }
+        let parsed = serde_json::from_str::<Vec<String>>(username)
+            .ok()
+            .and_then(|headers| {
+                headers
+                    .iter()
+                    .map(|header| AuthenticationHeader::parse(header))
+                    .collect::<Result<Vec<_>, _>>()
+                    .ok()
+            });
+        let Some(headers) = parsed else {
+            options.warning = Some(format!("Ignoring invalid custom-headers authentication for {origin}; expected a list of valid header strings"));
+            return Ok(());
+        };
+        options.headers.extend(headers);
         options.diagnostic = Some("Using custom HTTP headers for authentication".to_string());
     } else if origin == "github.com" && password == "x-oauth-basic" {
         if is_github_api_url(url) {
@@ -255,11 +287,18 @@ fn add_http_basic_options(
             options.diagnostic = Some("Using GitHub token authentication".to_string());
         }
     } else if is_gitlab_origin(origin)
-        && matches!(
-            password.as_str(),
-            "oauth2" | "private-token" | "gitlab-ci-token"
-        )
+        && (username == "gitlab-ci-token" || password == "gitlab-ci-token")
     {
+        add_gitlab_job_token(
+            options,
+            url,
+            if password == "gitlab-ci-token" {
+                username
+            } else {
+                password
+            },
+        )?;
+    } else if is_gitlab_origin(origin) && matches!(password.as_str(), "oauth2" | "private-token") {
         if password == "oauth2" {
             add_header(options, "authorization", format!("Bearer {username}"))?;
             options.diagnostic = Some("Using GitLab OAuth token authentication".to_string());
@@ -289,6 +328,27 @@ fn add_http_basic_options(
         ));
     }
 
+    Ok(())
+}
+
+fn add_gitlab_job_token(
+    options: &mut AuthenticationOptions,
+    url: &str,
+    token: &str,
+) -> Result<(), AuthenticationPolicyError> {
+    static REGISTRY: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)/api/v4/(?:group/[^/]+/-|projects/[^/]+)/packages/composer(?:/|$)")
+            .unwrap()
+    });
+    let registry = url::Url::parse(url)
+        .ok()
+        .is_some_and(|url| REGISTRY.is_match(url.path()));
+    if registry {
+        add_basic_header(options, "gitlab-ci-token", token)?;
+    } else {
+        add_header(options, "job-token", token.to_string())?;
+    }
+    options.diagnostic = Some("Using GitLab CI job token authentication".to_string());
     Ok(())
 }
 
@@ -560,17 +620,15 @@ mod tests {
     // testAddAuthenticationHeaderWithGitlabPrivateToken.
     #[test]
     fn composer_auth_helper_adds_gitlab_private_token_headers() {
-        for marker in ["private-token", "gitlab-ci-token"] {
-            let config = config_with_basic("gitlab.com", "my_username", marker);
-            let options =
-                authentication_options(&config, "gitlab.com", "https://api.gitlab.com/", &[])
-                    .unwrap();
-            assert_eq!(options.header_lines(), ["PRIVATE-TOKEN: my_username"]);
-            assert_eq!(
-                options.diagnostic(),
-                Some("Using GitLab private token authentication")
-            );
-        }
+        let marker = "private-token";
+        let config = config_with_basic("gitlab.com", "my_username", marker);
+        let options =
+            authentication_options(&config, "gitlab.com", "https://api.gitlab.com/", &[]).unwrap();
+        assert_eq!(options.header_lines(), ["PRIVATE-TOKEN: my_username"]);
+        assert_eq!(
+            options.diagnostic(),
+            Some("Using GitLab private token authentication")
+        );
     }
 
     // Ported from Composer\Test\Util\AuthHelperTest::
@@ -707,10 +765,11 @@ mod tests {
 
         let injected = serde_json::json!(["X-Token: safe\r\nX-Leak: secret"]);
         let invalid = config_with_basic("example.org", &injected.to_string(), "custom-headers");
-        assert_eq!(
-            authentication_options(&invalid, "example.org", "https://example.org", &[]),
-            Err(AuthenticationPolicyError::InvalidCustomHeaders)
-        );
+        let ignored =
+            authentication_options(&invalid, "example.org", "https://example.org", &[]).unwrap();
+        assert!(ignored.headers().is_empty());
+        assert!(ignored.warning().is_some());
+        assert!(!ignored.warning().unwrap().contains("secret"));
     }
 
     // Ported from Composer\Test\Util\AuthHelperTest::

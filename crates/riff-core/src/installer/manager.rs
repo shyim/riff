@@ -186,6 +186,24 @@ impl InstallationManager {
         layouts: PackageLayouts,
         observer: Option<Arc<dyn PackageInstallObserver>>,
     ) -> Result<InstallResult> {
+        // Validate the complete transaction before any removal or installation.
+        for operation in &transaction.operations {
+            match operation {
+                Operation::Install(package)
+                | Operation::Reinstall(package)
+                | Operation::Uninstall(package) => {
+                    crate::package::validate_installed_package(package)
+                        .map_err(|error| crate::RiffError::InstallationFailed(error.to_string()))?
+                }
+                Operation::Update { from, to } => {
+                    crate::package::validate_installed_package(from)
+                        .map_err(|error| crate::RiffError::InstallationFailed(error.to_string()))?;
+                    crate::package::validate_installed_package(to)
+                        .map_err(|error| crate::RiffError::InstallationFailed(error.to_string()))?;
+                }
+                _ => {}
+            }
+        }
         let mut result = InstallResult {
             installed: Vec::new(),
             updated: Vec::new(),
