@@ -862,7 +862,16 @@ fn execute_shell_command(
     #[cfg(windows)]
     let mut command = Command::new("cmd");
     #[cfg(windows)]
-    command.arg("/C").arg(cmd);
+    {
+        use std::os::windows::process::CommandExt;
+
+        // cmd.exe does not use C-runtime argument escaping. Pass the already
+        // composed shell expression verbatim, with /S stripping the outer pair
+        // of quotes while preserving quoted executables and PHP -r arguments.
+        command
+            .args(["/D", "/S", "/C"])
+            .raw_arg(format!("\"{cmd}\""));
+    }
 
     command.current_dir(working_dir);
 
