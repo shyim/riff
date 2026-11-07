@@ -366,9 +366,26 @@ pub struct LockedPackage {
     #[serde(
         default,
         rename = "transport-options",
+        serialize_with = "serialize_transport_options",
         skip_serializing_if = "Option::is_none"
     )]
     pub transport_options: Option<serde_json::Value>,
+}
+
+fn serialize_transport_options<S: serde::Serializer>(
+    options: &Option<serde_json::Value>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    use serde::Serialize;
+    let mut options = options.clone();
+    if let Some(http) = options
+        .as_mut()
+        .and_then(|value| value.get_mut("http"))
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        http.remove("header");
+    }
+    options.serialize(serializer)
 }
 
 fn is_null_or_false(v: &serde_json::Value) -> bool {

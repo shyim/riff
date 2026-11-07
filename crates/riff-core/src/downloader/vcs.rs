@@ -415,7 +415,7 @@ fn run_spec(vcs_type: &str, spec: &VcsCommandSpec) -> Result<String> {
 }
 
 fn run(vcs_type: &str, command: &mut Command) -> Result<String> {
-    let description = format!("{command:?}");
+    let description = crate::process::redact_command(&format!("{command:?}"));
     let output = command
         .output()
         .map_err(|error| RiffError::DownloadFailed {
@@ -429,7 +429,7 @@ fn run(vcs_type: &str, command: &mut Command) -> Result<String> {
             package: "source".to_string(),
             reason: format!(
                 "{description}: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
+                crate::process::redact_command(String::from_utf8_lossy(&output.stderr).trim())
             ),
         })
     }

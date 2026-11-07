@@ -98,3 +98,28 @@ mod unix {
         assert!(!project.path().join("should-not-exist").exists());
     }
 }
+
+#[test]
+fn php_inline_scripts_preserve_quotes_and_shell_operators() {
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join("composer.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "scripts": {
+                "quoted": "@php -r \"file_put_contents('first marker', 'two words');\" && echo shell-finished"
+            }
+        })).unwrap(),
+    ).unwrap();
+    assert_cmd::Command::cargo_bin("riff")
+        .unwrap()
+        .current_dir(project.path())
+        .env("COMPOSER_HOME", project.path().join("home"))
+        .args(["run-script", "quoted"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("shell-finished"));
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("first marker")).unwrap(),
+        "two words"
+    );
+}

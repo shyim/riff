@@ -361,6 +361,9 @@ impl ArchiveExtractor {
                 RiffError::InstallationFailed(format!("Failed to read zip entry: {}", e))
             })?;
 
+            if common_prefix.is_some() && crate::archive::is_metadata_path(file.name()) {
+                continue;
+            }
             let enclosed_path = file.enclosed_name().ok_or_else(|| {
                 RiffError::InstallationFailed(format!(
                     "Path traversal detected in archive: {}",
@@ -455,20 +458,14 @@ impl ArchiveExtractor {
             return None;
         }
 
-        // Get first entry's name
-        let first_name = archive.name_for_index(0)?;
-
-        // Find the first directory component
+        let mut names = (0..archive.len())
+            .filter_map(|i| archive.name_for_index(i))
+            .filter(|name| !crate::archive::is_metadata_path(name));
+        let first_name = names.next()?;
         let slash_pos = first_name.find('/')?;
         let prefix = &first_name[..=slash_pos];
-
-        // Check if all entries share this prefix
-        for i in 0..archive.len() {
-            if let Some(name) = archive.name_for_index(i) {
-                if !name.starts_with(prefix) {
-                    return None;
-                }
-            }
+        if names.any(|name| !name.starts_with(prefix)) {
+            return None;
         }
 
         Some(prefix.to_string())
@@ -540,6 +537,9 @@ impl ArchiveExtractor {
                 RiffError::InstallationFailed(format!("Invalid path in tar: {}", e))
             })?;
 
+            if strip_components > 0 && crate::archive::is_metadata_path(&path.to_string_lossy()) {
+                continue;
+            }
             // Strip leading components
             let components: Vec<_> = path.components().collect();
             if components.len() <= strip_components {

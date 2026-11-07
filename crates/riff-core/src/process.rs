@@ -14,8 +14,10 @@ static URL_CREDENTIALS: LazyLock<Regex> = LazyLock::new(|| {
         .expect("URL credential regex is valid")
 });
 static PASSWORD_ARGUMENT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?s)(?P<prefix>--password\s+)'(?:\\.|[^'])*'")
-        .expect("password argument regex is valid")
+    Regex::new(
+        r#"(?s)(?P<prefix>--password(?:"?\s+|=))(?:'(?:\\.|[^'])*'|"(?:\\.|[^"\\])*"|[^\s]+)"#,
+    )
+    .expect("password argument regex is valid")
 });
 static WINDOWS_ENV_EXPANSION: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"%[^%]+%|![^!]+!").expect("Windows expansion regex is valid"));

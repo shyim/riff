@@ -277,7 +277,11 @@ impl JsonManipulator {
         link_type: &str,
         package: &str,
     ) -> Result<bool, ManipulatorError> {
+        let before = self.contents.clone();
         self.remove_sub_node(link_type, package)?;
+        if self.contents == before {
+            return Ok(true);
+        }
         self.remove_main_key_if_empty(link_type)
     }
 
@@ -359,6 +363,7 @@ impl JsonManipulator {
     }
 
     pub fn remove_repository(&mut self, name: &str) -> Result<bool, ManipulatorError> {
+        let before = self.contents.clone();
         let parsed: Value = serde_json::from_str(&self.contents)?;
         match parsed.get("repositories") {
             Some(Value::Object(repositories)) if repositories.contains_key(name) => {
@@ -375,6 +380,9 @@ impl JsonManipulator {
                 }
             }
             _ => {}
+        }
+        if self.contents == before {
+            return Ok(true);
         }
         self.remove_main_key_if_empty("repositories")
     }

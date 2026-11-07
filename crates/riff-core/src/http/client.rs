@@ -116,12 +116,14 @@ fn decode_json_response<T: DeserializeOwned>(url: &str, body: &str) -> Result<T,
     })
 }
 
+#[derive(Clone)]
 pub struct HttpClient {
     client: Client,
     user_agent: String,
     max_retries: u32,
     retry_delay: Duration,
     auth: Option<Arc<AuthConfig>>,
+    warned_auth_origins: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 }
 
 impl HttpClient {
@@ -177,6 +179,7 @@ impl HttpClient {
             max_retries: config.max_retries,
             retry_delay: config.retry_delay,
             auth: config.auth.map(Arc::new),
+            warned_auth_origins: Default::default(),
         })
     }
 
@@ -360,6 +363,15 @@ impl HttpClient {
                 reason: error.to_string(),
             }
         })?;
+        if let Some(warning) = options.warning() {
+            let origin = url::Url::parse(url)
+                .ok()
+                .and_then(|url| url.host_str().map(str::to_owned))
+                .unwrap_or_default();
+            if self.warned_auth_origins.lock().unwrap().insert(origin) {
+                log::warn!("{warning}");
+            }
+        }
         for header in options.headers() {
             request = request.header(header.name(), header.value().clone());
         }

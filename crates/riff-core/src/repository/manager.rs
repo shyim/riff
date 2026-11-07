@@ -22,6 +22,7 @@ pub struct RepositoryManager {
     /// Repositories in priority order (first = highest priority)
     repositories: Vec<Arc<dyn Repository>>,
     output: Output,
+    auth: crate::config::AuthConfig,
 }
 
 /// Packages returned for solving together with repository-priority context.
@@ -65,7 +66,13 @@ impl RepositoryManager {
         Self {
             repositories: Vec::new(),
             output: Output::silent(),
+            auth: Default::default(),
         }
+    }
+
+    pub fn with_auth(mut self, auth: crate::config::AuthConfig) -> Self {
+        self.auth = auth;
+        self
     }
 
     pub fn with_output(mut self, output: Output) -> Self {
@@ -458,7 +465,7 @@ impl RepositoryManager {
                 only,
                 exclude,
             } => {
-                let mut nested = RepositoryManager::new();
+                let mut nested = RepositoryManager::new().with_auth(self.auth.clone());
                 nested.add_from_json_repository_at_inner(repository, base_dir, session);
                 nested.repositories.pop().map(|repository| {
                     Arc::new(FilterRepository::new(
@@ -471,7 +478,13 @@ impl RepositoryManager {
             }
             JsonRepo::Composer { url, filter, .. } => {
                 let name = extract_repo_name(url);
-                if let Some(session) = session {
+                if self.auth.find_auth_origin(url).is_some() {
+                    // Authenticated metadata is project-local, never shared through session or disk caches.
+                    let mut repository = ComposerRepository::new(name, url);
+                    repository.set_auth(self.auth.clone());
+                    repository.set_user_filter_config(filter.clone());
+                    Some(Arc::new(repository))
+                } else if let Some(session) = session {
                     Some(session.composer_repository(name, url, filter) as Arc<dyn Repository>)
                 } else {
                     let mut repository =
@@ -544,7 +557,9 @@ impl RepositoryManager {
     }
 
     fn vcs_repository(&self, url: impl Into<String>, vcs_type: VcsType) -> VcsRepository {
-        VcsRepository::new(url, vcs_type).with_output(self.output.clone())
+        VcsRepository::new(url, vcs_type)
+            .with_output(self.output.clone())
+            .with_auth(self.auth.clone())
     }
 
     /// Add multiple repositories from composer.json

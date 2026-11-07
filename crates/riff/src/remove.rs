@@ -10,7 +10,7 @@ use crate::CommandContext;
 use riff_core::{
     config::Config,
     installer::{Installer, UpdateOptions},
-    json::{write_manifest, AllowPlugins, LockedPackage, RiffLockfile, RiffManifest},
+    json::{write_manifest_update, AllowPlugins, LockedPackage, RiffLockfile, RiffManifest},
     policy_config::PolicyEnvironment,
     RiffBuilder,
 };
@@ -451,7 +451,8 @@ pub async fn execute(args: RemoveArgs, context: &CommandContext) -> Result<i32> 
 
     // Write updated composer.json
     if plan.should_write_manifest(args.dry_run) {
-        write_manifest(&json_path, &riff.manifest).context("Failed to write composer.json")?;
+        write_manifest_update(&json_path, &riff.manifest)
+            .context("Failed to write composer.json")?;
     } else if plan.manifest_changed() {
         riff_core::outln!(
             context.output(),

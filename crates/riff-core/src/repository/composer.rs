@@ -185,6 +185,7 @@ pub struct ComposerRepository {
     cache_ttl: Duration,
     /// Authentication configuration
     auth: Option<Arc<AuthConfig>>,
+    warned_auth_origins: StdMutex<HashSet<String>>,
     /// Per-package loading locks to prevent concurrent loads of the same package
     loading_locks: RwLock<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// Notification URL from repository metadata
@@ -269,6 +270,7 @@ impl ComposerRepository {
             file_cache: None,
             cache_ttl: DEFAULT_CACHE_TTL,
             auth: None,
+            warned_auth_origins: StdMutex::new(HashSet::new()),
             notify_batch: RwLock::new(None),
             search_url: RwLock::new(None),
             providers_api_url: RwLock::new(None),
@@ -340,6 +342,11 @@ impl ComposerRepository {
 
     /// Set authentication configuration
     pub fn set_auth(&mut self, auth: AuthConfig) {
+        self.client = reqwest::Client::builder()
+            .user_agent("riff-composer/0.1.0")
+            .redirect(crate::http::authenticated_redirect_policy())
+            .build()
+            .expect("valid authenticated repository HTTP client");
         self.auth = Some(Arc::new(auth));
     }
 
@@ -349,33 +356,29 @@ impl ComposerRepository {
         self.user_filter_config = config;
     }
 
-    /// Apply authentication to a request builder
+    /// Apply the shared origin-scoped authentication policy to every repository request.
     fn apply_auth(
         &self,
         mut request: reqwest::RequestBuilder,
         url: &str,
-    ) -> reqwest::RequestBuilder {
-        if let Some(ref auth) = self.auth {
-            match auth.find_for_url(url) {
-                crate::config::AuthMatch::HttpBasic(creds) => {
-                    request = request.basic_auth(&creds.username, Some(&creds.password));
+    ) -> Result<reqwest::RequestBuilder, String> {
+        if let Some(auth) = &self.auth {
+            let options = crate::http::authentication_options(auth, url, url, &[])
+                .map_err(|error| error.to_string())?;
+            if let Some(warning) = options.warning() {
+                let origin = url::Url::parse(url)
+                    .ok()
+                    .and_then(|url| url.host_str().map(str::to_owned))
+                    .unwrap_or_default();
+                if self.warned_auth_origins.lock().unwrap().insert(origin) {
+                    log::warn!("{warning}");
                 }
-                crate::config::AuthMatch::Bearer(token) => {
-                    request = request.bearer_auth(token);
-                }
-                crate::config::AuthMatch::GitHubOAuth(token) => {
-                    request = request.bearer_auth(token);
-                }
-                crate::config::AuthMatch::GitLabToken(token) => {
-                    request = request.header("PRIVATE-TOKEN", token);
-                }
-                crate::config::AuthMatch::BitbucketOAuth(creds) => {
-                    request = request.basic_auth(&creds.consumer_key, Some(&creds.consumer_secret));
-                }
-                crate::config::AuthMatch::None => {}
+            }
+            for header in options.headers() {
+                request = request.header(header.name(), header.value().clone());
             }
         }
-        request
+        Ok(request)
     }
 
     /// Generate cache key for a package
@@ -977,7 +980,7 @@ impl ComposerRepository {
             .client
             .get(url)
             .header("If-Modified-Since", last_modified);
-        let request = self.apply_auth(request, url);
+        let request = self.apply_auth(request, url)?;
         let response = request
             .send()
             .await
@@ -1022,7 +1025,7 @@ impl ComposerRepository {
         let start = std::time::Instant::now();
 
         let request = self.client.get(url);
-        let request = self.apply_auth(request, url);
+        let request = self.apply_auth(request, url)?;
         let response = request
             .send()
             .await
@@ -1970,7 +1973,7 @@ impl ComposerRepository {
                 .timeout(Duration::from_secs(request.timeout_seconds))
                 .body(request.body);
             let response = self
-                .apply_auth(request_builder, &request.url)
+                .apply_auth(request_builder, &request.url)?
                 .send()
                 .await
                 .map_err(|error| {
@@ -2065,7 +2068,7 @@ impl ComposerRepository {
                 .timeout(Duration::from_secs(request.timeout_seconds))
                 .body(request.body);
             let response = self
-                .apply_auth(request_builder, &request.url)
+                .apply_auth(request_builder, &request.url)?
                 .send()
                 .await
                 .map_err(|error| {
@@ -2432,7 +2435,9 @@ impl Repository for ComposerRepository {
             let url = providers_url.replace("%package%", package_name);
 
             let request = self.client.get(&url);
-            let request = self.apply_auth(request, &url);
+            let Ok(request) = self.apply_auth(request, &url) else {
+                return Vec::new();
+            };
 
             let response = match request.send().await {
                 Ok(r) => r,
@@ -4651,5 +4656,38 @@ mod tests {
                 .unwrap(),
             &summary
         );
+    }
+}
+
+#[cfg(test)]
+mod composer_211_auth_tests {
+    use super::*;
+    #[test]
+    fn registry_requests_use_shared_job_token_and_custom_header_policy() {
+        let url = "https://code.example.org/api/v4/group/1/-/packages/composer/packages.json";
+        let mut repo = ComposerRepository::new("private", url);
+        repo.set_auth(serde_json::from_value(serde_json::json!({"gitlab-token":{"code.example.org":{"username":"gitlab-ci-token","token":"fake-token"}}})).unwrap());
+        let request = repo
+            .apply_auth(repo.client.get(url), url)
+            .unwrap()
+            .build()
+            .unwrap();
+        assert!(request.headers()["authorization"]
+            .to_str()
+            .unwrap()
+            .starts_with("Basic "));
+        assert!(!request.headers().contains_key("private-token"));
+        repo.set_auth(
+            serde_json::from_value(
+                serde_json::json!({"custom-headers":{"code.example.org":["X-Token: example"]}}),
+            )
+            .unwrap(),
+        );
+        let request = repo
+            .apply_auth(repo.client.get(url), url)
+            .unwrap()
+            .build()
+            .unwrap();
+        assert_eq!(request.headers()["x-token"], "example");
     }
 }

@@ -26,3 +26,21 @@ pub use transport::{
     HttpTransportPolicyError, HttpWarningMetadata, PreparedHttpUrl, TlsOptions, TransferProgress,
     UrlAuthentication, VersionedHttpNotice,
 };
+
+/// Custom token headers must never follow a redirect into another origin.
+pub(crate) fn authenticated_redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= 10 {
+            return attempt.error("too many redirects");
+        }
+        if attempt
+            .previous()
+            .last()
+            .is_some_and(|previous| previous.origin() != attempt.url().origin())
+        {
+            attempt.stop()
+        } else {
+            attempt.follow()
+        }
+    })
+}

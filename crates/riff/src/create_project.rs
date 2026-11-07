@@ -188,6 +188,7 @@ pub async fn execute(args: CreateProjectArgs, context: &CommandContext) -> Resul
             no_plugins: args.no_plugins,
             no_security_blocking: args.no_security_blocking,
             no_blocking: args.no_blocking,
+            strict_psr_autoloader: false,
             optimize_autoloader: false,
             classmap_authoritative: false,
             apcu_autoloader: false,

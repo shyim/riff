@@ -472,3 +472,72 @@ fn composer_config_command_rejects_reserved_policy_list_names() {
             .stderr(contains(message));
     }
 }
+
+#[test]
+fn composer_211_config_updates_and_unsets_array_entries() {
+    assert_update(
+        json!({"extra":{"list":["a","b"]}}),
+        &["extra.list.1", "updated"],
+        json!({"extra":{"list":["a","updated"]}}),
+    );
+    assert_update(
+        json!({"scripts":{"test":["one","two"]}}),
+        &["scripts.test.0", "--unset"],
+        json!({"scripts":{"test":["two"]}}),
+    );
+    assert_update(
+        json!({"extra":{"list":["a"]}}),
+        &["extra.list.0", "--unset"],
+        json!({"extra":{"list":[]}}),
+    );
+    assert_update(
+        json!({}),
+        &["extra.foo.bar.baz", "value"],
+        json!({"extra":{"foo":{"bar.baz":"value"}}}),
+    );
+}
+
+#[test]
+fn composer_211_config_reads_dotted_properties_and_array_indices() {
+    let fixture =
+        ConfigFixture::new(json!({"extra":{"foo":{"bar.baz":"value"},"items":["first","second"]}}));
+    fixture
+        .command(&["extra.foo.bar.baz"])
+        .assert()
+        .success()
+        .stdout(contains("value"));
+    fixture
+        .command(&["extra.items.1"])
+        .assert()
+        .success()
+        .stdout(contains("second"));
+}
+
+#[test]
+fn strict_psr_config_round_trips_with_source() {
+    let fixture = ConfigFixture::new(json!({}));
+    fixture
+        .command(&["strict-psr-autoloader"])
+        .assert()
+        .success()
+        .stdout(contains("false"));
+    fixture
+        .command(&["strict-psr-autoloader", "true"])
+        .assert()
+        .success();
+    assert_eq!(fixture.document()["config"]["strict-psr-autoloader"], true);
+    fixture
+        .command(&["--list", "--source"])
+        .assert()
+        .success()
+        .stdout(contains("[strict-psr-autoloader] true (./composer.json)"));
+    fixture
+        .command(&["--unset", "strict-psr-autoloader"])
+        .assert()
+        .success();
+    fixture
+        .command(&["strict-psr-autoloader"])
+        .assert()
+        .success()
+        .stdout(contains("false"));
+}

@@ -72,6 +72,26 @@ history. If authentication fails, `riff config --list --source` can verify the
 active configuration layer, but its output may include credential values.
 Always redact that output before sharing it.
 
+GitLab CI job tokens use the `gitlab-token` object form:
+
+```json
+{"gitlab-token":{"gitlab.example.org":{"username":"gitlab-ci-token","token":"CI_JOB_TOKEN_VALUE"}}}
+```
+
+Riff sends HTTP Basic authentication to GitLab Composer registry endpoints and
+`JOB-TOKEN` to other GitLab endpoints. Custom headers use
+`{"custom-headers":{"packages.example.org":["X-Token: TOKEN_VALUE"]}}`.
+Malformed header lists are ignored with a warning; valid headers in a malformed
+list are not sent either. Authentication remains scoped to its configured host.
+Authenticated repository requests stop at redirects to another origin; configure
+the destination URL and its credentials directly. Authenticated repository metadata
+is kept per project rather than reused from
+the session or disk metadata cache.
+
+HTTP headers in package transport options are omitted when writing a lockfile,
+including when rewriting an older lockfile. Put credentials in `auth.json` or
+`COMPOSER_AUTH` so fresh installs can authenticate without lockfile secrets.
+
 ## PHP and platform detection
 
 PHP selection has a fixed precedence:
@@ -113,6 +133,9 @@ Composer's `cache-dir` and `COMPOSER_CACHE_DIR` are parsed and displayed for
 compatibility but do not redirect Riff's runtime cache. This prevents Riff
 and Composer from mixing differently structured cache entries.
 
+On WSL, Riff warns when the cache resolves to a Windows drive under `/mnt`.
+Use `RIFF_CACHE_DIR` to select a Linux filesystem path for faster cache access.
+
 Manage the runtime cache with:
 
 ```sh
@@ -138,3 +161,8 @@ Composer-compatible commands may honor additional `COMPOSER_` variables. Use
 command help and `riff config --list --source` to confirm behavior rather than
 assuming every variable supported by a particular Composer release is
 implemented.
+
+Enable `strict-psr-autoloader` together with `optimize-autoloader` (or
+`classmap-authoritative`) to fail on root PSR-0/PSR-4 violations. Install and update
+return exit code 6; dump-autoload returns 1. Dependencies inside vendor are excluded.
+Install/update also accept `--strict-psr-autoloader`; dump-autoload accepts `--strict-psr`.
