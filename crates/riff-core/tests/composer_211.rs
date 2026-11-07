@@ -303,6 +303,9 @@ async fn project_auth_reaches_repository_and_archive_requests_without_cross_proj
                     }
                 }
             };
+            // BSD/macOS can inherit the listener's nonblocking mode.
+            // Read the request with the timeout below on every platform.
+            socket.set_nonblocking(false).unwrap();
             socket
                 .set_read_timeout(Some(std::time::Duration::from_secs(10)))
                 .unwrap();
