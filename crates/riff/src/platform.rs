@@ -3,7 +3,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::process::Stdio;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
 use riff_core::cache::runtime_cache_dir;
@@ -140,7 +140,9 @@ fn probe_with_cache(
 }
 
 fn run_probe(php_binary: &Path, timeout: Duration) -> Result<ProbeOutput> {
-    let mut child = Command::new(php_binary)
+    let started = Instant::now();
+    let mut command = Command::new(php_binary);
+    command
         .arg("-d")
         .arg("display_errors=stderr")
         .arg("-d")
@@ -148,11 +150,35 @@ fn run_probe(php_binary: &Path, timeout: Duration) -> Result<ProbeOutput> {
         .arg("-r")
         .arg(PLATFORM_PROBE)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .with_context(|| format!("Failed to execute PHP at {}", php_binary.display()))?;
+        .stderr(Stdio::piped());
+    let mut child = loop {
+        match command.spawn() {
+            Ok(child) => break child,
+            #[cfg(unix)]
+            Err(error) if error.raw_os_error() == Some(libc::ETXTBSY) => {
+                // A concurrent writer (including a descriptor inherited during
+                // fork) can briefly prevent execution. Keep launch retries
+                // inside the same deadline as the probe itself.
+                let remaining = timeout.saturating_sub(started.elapsed());
+                if remaining.is_zero() {
+                    bail!(
+                        "PHP platform probe timed out while launching {}: {error}",
+                        php_binary.display()
+                    );
+                }
+                std::thread::sleep(remaining.min(Duration::from_millis(10)));
+            }
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("Failed to execute PHP at {}", php_binary.display()))
+            }
+        }
+    };
 
-    if child.wait_timeout(timeout)?.is_none() {
+    if child
+        .wait_timeout(timeout.saturating_sub(started.elapsed()))?
+        .is_none()
+    {
         let _ = child.kill();
         let _ = child.wait();
         bail!(
@@ -397,10 +423,11 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let invalid = directory.path().join("invalid-php");
         executable(&invalid, "#!/bin/sh\nprintf not-json\n");
-        assert!(probe_with_timeout(&invalid, Duration::from_secs(1))
-            .unwrap_err()
-            .to_string()
-            .contains("invalid platform data"));
+        let error = probe_with_timeout(&invalid, Duration::from_secs(1)).unwrap_err();
+        assert!(
+            error.to_string().contains("invalid platform data"),
+            "{error:#}"
+        );
 
         let slow = directory.path().join("slow-php");
         executable(&slow, "#!/bin/sh\nsleep 1\n");
@@ -421,6 +448,34 @@ mod tests {
         );
 
         let error = probe_with_timeout(&php, Duration::from_secs(1)).unwrap_err();
-        assert!(error.to_string().contains("requires PHP >= 7.2.5"));
+        assert!(
+            error.to_string().contains("requires PHP >= 7.2.5"),
+            "{error:#}"
+        );
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn probe_retries_busy_executables_within_its_timeout() {
+        let directory = tempfile::tempdir().unwrap();
+        let php = directory.path().join("busy-php");
+        executable(&php, "#!/bin/sh\nprintf not-json\n");
+        let writer = std::fs::OpenOptions::new().write(true).open(&php).unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            drop(writer);
+        });
+        let error = probe_with_timeout(&php, Duration::from_secs(2)).unwrap_err();
+        release.join().unwrap();
+        assert!(
+            error.to_string().contains("invalid platform data"),
+            "{error:#}"
+        );
+
+        let _writer = std::fs::OpenOptions::new().write(true).open(&php).unwrap();
+        let error = probe_with_timeout(&php, Duration::from_millis(20)).unwrap_err();
+        assert!(
+            error.to_string().contains("timed out while launching"),
+            "{error:#}"
+        );
     }
 }
