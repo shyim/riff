@@ -24,7 +24,7 @@ use crate::{Result, RiffError};
 
 use super::archive::{
     check_cancelled, copy_zip_entry, set_zip_permissions, validate_zip_relative_path,
-    ArchiveExtractor, ZIP_COPY_BUFFER_SIZE,
+    zip_name_error, ArchiveExtractor, ZIP_COPY_BUFFER_SIZE,
 };
 use super::checksum::{ChecksumHasher, ChecksumType};
 
@@ -310,7 +310,7 @@ fn extract_local_entries(
             });
         };
         let entry = StreamedEntry {
-            name: file.name().to_owned(),
+            name: file.name().map_err(zip_name_error)?.into_owned(),
             header_start,
             data_start: position.get(),
             compressed_size: file.compressed_size(),
@@ -321,7 +321,7 @@ fn extract_local_entries(
         let path = file.enclosed_name().ok_or_else(|| {
             RiffError::InstallationFailed(format!(
                 "Path traversal detected in archive: {}",
-                file.name()
+                entry.name
             ))
         })?;
         let output = destination.join(path);
@@ -360,13 +360,13 @@ fn validate_streamed_entries(
     {
         return Ok(StreamedValidation::Fallback);
     }
-    let prefix = ArchiveExtractor::find_zip_common_prefix(&archive);
+    let prefix = ArchiveExtractor::find_zip_common_prefix(&archive)?;
     for (index, entry) in streamed.entries.iter().enumerate() {
         check_cancelled(Some(cancelled))?;
         let file = archive.by_index_raw(index).map_err(|error| {
             RiffError::InstallationFailed(format!("Failed to read zip entry: {error}"))
         })?;
-        if file.name() != entry.name
+        if file.name().map_err(zip_name_error)? != entry.name
             || file.header_start() != entry.header_start
             || file.data_start() != Some(entry.data_start)
             || file.compressed_size() != entry.compressed_size
@@ -380,7 +380,7 @@ fn validate_streamed_entries(
         let path = file.enclosed_name().ok_or_else(|| {
             RiffError::InstallationFailed(format!(
                 "Path traversal detected in archive: {}",
-                file.name()
+                entry.name
             ))
         })?;
         let relative_path = prefix

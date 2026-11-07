@@ -520,7 +520,7 @@ fn read_zip_composer_json(path: &Path) -> Result<Option<String>, ComposerArchive
             return Ok(None);
         };
         members.push(ArchiveMember {
-            path: normalize_member_path(member.name()),
+            path: normalize_member_path(&member.name().map_err(std::io::Error::other)?),
             is_file: member.is_file(),
         });
     }
@@ -528,8 +528,16 @@ fn read_zip_composer_json(path: &Path) -> Result<Option<String>, ComposerArchive
     let Some(manifest_path) = locate_composer_json(&members)? else {
         return Ok(None);
     };
+    // Keep the original entry index: ZIP 9 looks up names by their raw bytes,
+    // which need not equal the UTF-8 bytes of the decoded/normalized name.
+    let Some(manifest_index) = members
+        .iter()
+        .position(|member| member.path == manifest_path)
+    else {
+        return Ok(None);
+    };
     let mut manifest = archive
-        .by_name(&manifest_path)
+        .by_index(manifest_index)
         .map_err(|error| std::io::Error::other(error.to_string()))?;
     let mut contents = String::new();
     manifest.read_to_string(&mut contents)?;
@@ -642,7 +650,7 @@ mod tests {
         let mut contents = BTreeMap::new();
         for index in 0..archive.len() {
             let mut file = archive.by_index(index).unwrap();
-            let name = file.name().to_owned();
+            let name = file.name().unwrap().into_owned();
             let mut value = String::new();
             file.read_to_string(&mut value).unwrap();
             contents.insert(name, value);

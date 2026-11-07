@@ -17,6 +17,10 @@ const MAX_IN_MEMORY_ZIP_SIZE: u64 = 4 * 1024 * 1024;
 // Allocate once per archive, including when most of its members are small.
 pub(super) const ZIP_COPY_BUFFER_SIZE: usize = 64 * 1024;
 
+pub(super) fn zip_name_error(error: zip::result::ZipError) -> RiffError {
+    RiffError::InstallationFailed(format!("Failed to decode zip entry name: {error}"))
+}
+
 pub(super) fn copy_zip_entry(
     reader: &mut impl Read,
     writer: &mut impl Write,
@@ -350,7 +354,7 @@ impl ArchiveExtractor {
         Self::validate_zip_entry_names(&archive)?;
 
         // Find common prefix (GitHub archives have vendor-package-hash/ prefix)
-        let common_prefix = Self::find_zip_common_prefix(&archive);
+        let common_prefix = Self::find_zip_common_prefix(&archive)?;
         let mut created_directories = HashSet::new();
         created_directories.insert(dest_dir.to_path_buf());
         let mut copy_buffer = vec![0; ZIP_COPY_BUFFER_SIZE];
@@ -361,13 +365,14 @@ impl ArchiveExtractor {
                 RiffError::InstallationFailed(format!("Failed to read zip entry: {}", e))
             })?;
 
-            if common_prefix.is_some() && crate::archive::is_metadata_path(file.name()) {
+            let name = file.name().map_err(zip_name_error)?;
+            if common_prefix.is_some() && crate::archive::is_metadata_path(&name) {
                 continue;
             }
             let enclosed_path = file.enclosed_name().ok_or_else(|| {
                 RiffError::InstallationFailed(format!(
                     "Path traversal detected in archive: {}",
-                    file.name()
+                    name
                 ))
             })?;
             let relative_path = if let Some(ref prefix) = common_prefix {
@@ -409,27 +414,28 @@ impl ArchiveExtractor {
         archive: &zip::ZipArchive<R>,
     ) -> Result<()> {
         let mut names = std::collections::HashMap::<String, String>::new();
-        let common_prefix = Self::find_zip_common_prefix(archive);
+        let common_prefix = Self::find_zip_common_prefix(archive)?;
         for index in 0..archive.len() {
             let Some(name) = archive.name_for_index(index) else {
                 continue;
             };
+            let name = name.map_err(zip_name_error)?;
             // ZIP's enclosed_name normalizes parent components. Check the raw
             // name first so removing the package prefix cannot hide traversal.
             let relative_name = common_prefix
                 .as_ref()
                 .and_then(|prefix| name.strip_prefix(prefix))
-                .unwrap_or(name);
+                .unwrap_or(&name);
             validate_zip_relative_path(Path::new(relative_name))?;
             let normalized = name.replace('\\', "/").trim_end_matches('/').to_lowercase();
             if let Some(previous) = names.get(&normalized) {
-                if previous != name {
+                if previous != name.as_ref() {
                     return Err(RiffError::InstallationFailed(format!(
                         "archive may contain identical file names with different capitalization: {previous} and {name}"
                     )));
                 }
             } else {
-                names.insert(normalized, name.to_owned());
+                names.insert(normalized, name.into_owned());
             }
         }
         Ok(())
@@ -453,22 +459,27 @@ impl ArchiveExtractor {
     /// Find common prefix in zip archive (e.g., vendor-package-hash/)
     pub(super) fn find_zip_common_prefix<R: Read + Seek>(
         archive: &zip::ZipArchive<R>,
-    ) -> Option<String> {
-        if archive.is_empty() {
-            return None;
-        }
-
-        let mut names = (0..archive.len())
+    ) -> Result<Option<String>> {
+        // Decode every name before choosing a prefix; a malformed later entry
+        // must not be silently skipped or hidden by an early prefix mismatch.
+        let names = (0..archive.len())
             .filter_map(|i| archive.name_for_index(i))
+            .collect::<zip::result::ZipResult<Vec<_>>>()
+            .map_err(zip_name_error)?;
+        let mut names = names
+            .iter()
             .filter(|name| !crate::archive::is_metadata_path(name));
-        let first_name = names.next()?;
-        let slash_pos = first_name.find('/')?;
+        let Some(first_name) = names.next() else {
+            return Ok(None);
+        };
+        let Some(slash_pos) = first_name.find('/') else {
+            return Ok(None);
+        };
         let prefix = &first_name[..=slash_pos];
         if names.any(|name| !name.starts_with(prefix)) {
-            return None;
+            return Ok(None);
         }
-
-        Some(prefix.to_string())
+        Ok(Some(prefix.to_string()))
     }
 
     /// Extract a plain tar archive

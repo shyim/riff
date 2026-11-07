@@ -502,3 +502,50 @@ fn failed_publication_restores_previous_installation() {
     assert_eq!(fs::read(destination.join("old")).unwrap(), b"old");
     assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 2);
 }
+
+#[test]
+fn zip9_decoded_names_work_for_manifest_discovery_and_both_extractors() {
+    for cp437 in [false, true] {
+        let temp = TempDir::new().unwrap();
+        let prefix = if cp437 { "cafX" } else { "café" };
+        let manifest_name = format!("{prefix}/composer.json");
+        let source_name = format!("{prefix}/src/file.php");
+        let mut bytes = zip_bytes(&[
+            (&manifest_name, b"{\"name\":\"fixture/package\"}"),
+            (&source_name, b"<?php // contents"),
+        ]);
+        if cp437 {
+            // Replace the ASCII placeholder in both local and central names
+            // with CP437 é, preserving header lengths and file checksums.
+            let offsets: Vec<_> = bytes
+                .windows(4)
+                .enumerate()
+                .filter_map(|(i, value)| (value == b"cafX").then_some(i + 3))
+                .collect();
+            assert_eq!(offsets.len(), 4);
+            for offset in offsets {
+                bytes[offset] = 0x82;
+            }
+        }
+        let path = temp.path().join("source.zip");
+        fs::write(&path, &bytes).unwrap();
+        assert_eq!(
+            crate::archive::read_composer_json_from_archive(
+                &path,
+                crate::archive::ComposerArchiveFormat::Zip
+            )
+            .unwrap()
+            .as_deref(),
+            Some("{\"name\":\"fixture/package\"}")
+        );
+        let destination = temp.path().join("seekable");
+        ArchiveExtractor::extract(&path, &destination).unwrap();
+        let prepared = prepare(&bytes, &temp).unwrap();
+        for contents in [&destination, &prepared.contents] {
+            assert_eq!(
+                fs::read(contents.join("src/file.php")).unwrap(),
+                b"<?php // contents"
+            );
+        }
+    }
+}
