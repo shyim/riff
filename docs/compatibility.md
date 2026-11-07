@@ -124,9 +124,8 @@ behavior are described in [Configuration](configuration.md).
 
 Riff preserves JSON lists when deleting numeric entries, including nested lists.
 Composer 2.11.1 still turns some nested lists into objects with numeric keys through
-its JSON manipulator fast path; Riff deliberately keeps the list shape. The offline
-[2.11 differential script](../scripts/composer-211-differential.py) covers the shared
-array fallback, dependency mutation, and quoted-script contracts.
+its JSON manipulator fast path; Riff deliberately keeps the list shape.
+See [Testing](../TESTING.md#composer-211-regressions) for the regression tests.
 
 Strict PSR autoloading is supported through `config.strict-psr-autoloader` and
 install/update's `--strict-psr-autoloader` flag. Optimized generation writes the
