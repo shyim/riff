@@ -1,0 +1,310 @@
+{
+  "date": "2026-11-07",
+  "base_commit": "ed787751064348537cc89abb19303c2b9f5f5d89",
+  "rust": "1.98.0",
+  "os": "Linux 7.2.12-300.fc45.x86_64",
+  "cpu": "AMD EPYC-Genoa Processor",
+  "profile": "release (fat LTO, one codegen unit)",
+  "benchmark_source_sha256": "ab3cf2a3cb212160ebfc7c1bd51c04073377942a767d5ffbf8f1f13264a3ba1f",
+  "policy_source_sha256": "43023de40c07fcc6b0ccf733f85048d60312433f6fe62327aa5a8510012a45e2",
+  "binary_sha256": "a04bae698a51f453df01c144dae0313f25fcf701c87d4307b805c65695d39571",
+  "shopware_commit": "e3047c6738fc09a0076a103734c109134440768b",
+  "shopware_lock_sha256": "e7035edd11a19d57c5eff1856131c3b2921140b9d6eee407cedaf03f742fd6d8",
+  "method": "Nine alternating pairs, twenty passes per sample. Fixture construction excluded. Each cached pass creates and drops its own matcher. Fixed synthetic platform version 8.2.0.0 for all required platform packages. No network or PHP; no concurrent agent builds during measurement.",
+  "runs": {
+    "repeated": {
+      "fixture": "repeated",
+      "packages": 10000,
+      "platform_requirement_occurrences": 10000,
+      "distinct_pairs": 3,
+      "samples": [
+        {
+          "cached": false,
+          "ms_per_pass": 6.49189145,
+          "fingerprint": 200000
+        },
+        {
+          "cached": true,
+          "ms_per_pass": 0.2917694,
+          "fingerprint": 200000
+        },
+        {
+          "cached": true,
+          "ms_per_pass": 0.2916437,
+          "fingerprint": 200000
+        },
+        {
+          "cached": false,
+          "ms_per_pass": 6.11084485,
+          "fingerprint": 200000
+        },
+        {
+          "cached": false,
+          "ms_per_pass": 6.3139366,
+          "fingerprint": 200000
+        },
+        {
+          "cached": true,
+          "ms_per_pass": 0.29752864999999995,
+          "fingerprint": 200000
+        },
+        {
+          "cached": true,
+          "ms_per_pass": 0.30554169999999997,
+          "fingerprint": 200000
+        },
+        {
+          "cached": false,
+          "ms_per_pass": 6.666641299999999,
+          "fingerprint": 200000
+        },
+        {
+          "cached": false,
+          "ms_per_pass": 6.27174545,
+          "fingerprint": 200000
+        },
+        {
+          "cached": true,
+          "ms_per_pass": 0.29266129999999996,
+          "fingerprint": 200000
+        },
+        {
+          "cached": true,
+          "ms_per_pass": 0.37259625,
+          "fingerprint": 200000
+        },
+        {
+          "cached": false,
+          "ms_per_pass": 6.466147599999999,
+          "fingerprint": 200000
+        },
+        {
+          "cached": false,
+          "ms_per_pass": 6.57349995,
+          "fingerprint": 200000
+        },
+        {
+          "cached": true,
+          "ms_per_pass": 0.31493485,
+          "fingerprint": 200000
+        },
+        {
+          "cached": true,
+          "ms_per_pass": 0.2919141,
+          "fingerprint": 200000
+        },
+        {
+          "cached": false,
+          "ms_per_pass": 6.44034765,
+          "fingerprint": 200000
+        },
+        {
+          "cached": false,
+          "ms_per_pass": 6.4808126999999995,
+          "fingerprint": 200000
+        },
+        {
+          "cached": true,
+          "ms_per_pass": 0.29067975,
+          "fingerprint": 200000
+        }
+      ]
+    },
+    "unique": {
+      "fixture": "unique",
+      "packages": 10000,
+      "platform_requirement_occurrences": 10000,
+      "distinct_pairs": 10000,
+      "samples": [
+        {
+          "cached": false,
+          "ms_per_pass": 4.4604526,
+          "fingerprint": 200000
+        },
+        {
+          "cached": true,
+          "ms_per_pass": 4.315502,
+          "fingerprint": 200000
+        },
+        {
+          "cached": true,
+          "ms_per_pass": 4.432912549999999,
+          "fingerprint": 200000
+        },
+        {
+          "cached": false,
+          "ms_per_pass": 4.41260045,
+          "fingerprint": 200000
+        },
+        {
+          "cached": false,
+          "ms_per_pass": 4.4730725499999995,
+          "fingerprint": 200000
+        },
+        {
+          "cached": true,
+          "ms_per_pass": 4.353313050000001,
+          "fingerprint": 200000
+        },
+        {
+          "cached": true,
+          "ms_per_pass": 4.59978415,
+          "fingerprint": 200000
+        },
+        {
+          "cached": false,
+          "ms_per_pass": 4.64977145,
+          "fingerprint": 200000
+        },
+        {
+          "cached": false,
+          "ms_per_pass": 4.67382475,
+          "fingerprint": 200000
+        },
+        {
+          "cached": true,
+          "ms_per_pass": 4.68733465,
+          "fingerprint": 200000
+        },
+        {
+          "cached": true,
+          "ms_per_pass": 4.81641775,
+          "fingerprint": 200000
+        },
+        {
+          "cached": false,
+          "ms_per_pass": 5.52636915,
+          "fingerprint": 200000
+        },
+        {
+          "cached": false,
+          "ms_per_pass": 4.4076825,
+          "fingerprint": 200000
+        },
+        {
+          "cached": true,
+          "ms_per_pass": 4.5282142,
+          "fingerprint": 200000
+        },
+        {
+          "cached": true,
+          "ms_per_pass": 4.5595894999999995,
+          "fingerprint": 200000
+        },
+        {
+          "cached": false,
+          "ms_per_pass": 4.6377749,
+          "fingerprint": 200000
+        },
+        {
+          "cached": false,
+          "ms_per_pass": 5.51115175,
+          "fingerprint": 200000
+        },
+        {
+          "cached": true,
+          "ms_per_pass": 4.9426731,
+          "fingerprint": 200000
+        }
+      ]
+    },
+    "shopware": {
+      "fixture": "shopware/composer.lock",
+      "packages": 253,
+      "platform_requirement_occurrences": 349,
+      "distinct_pairs": 79,
+      "samples": [
+        {
+          "cached": false,
+          "ms_per_pass": 0.27937725,
+          "fingerprint": 4920
+        },
+        {
+          "cached": true,
+          "ms_per_pass": 0.1080093,
+          "fingerprint": 4920
+        },
+        {
+          "cached": true,
+          "ms_per_pass": 0.10322764999999998,
+          "fingerprint": 4920
+        },
+        {
+          "cached": false,
+          "ms_per_pass": 0.1888983,
+          "fingerprint": 4920
+        },
+        {
+          "cached": false,
+          "ms_per_pass": 0.1895463,
+          "fingerprint": 4920
+        },
+        {
+          "cached": true,
+          "ms_per_pass": 0.09775685,
+          "fingerprint": 4920
+        },
+        {
+          "cached": true,
+          "ms_per_pass": 0.09643235,
+          "fingerprint": 4920
+        },
+        {
+          "cached": false,
+          "ms_per_pass": 0.19528445,
+          "fingerprint": 4920
+        },
+        {
+          "cached": false,
+          "ms_per_pass": 0.18614365,
+          "fingerprint": 4920
+        },
+        {
+          "cached": true,
+          "ms_per_pass": 0.10659420000000001,
+          "fingerprint": 4920
+        },
+        {
+          "cached": true,
+          "ms_per_pass": 0.1007479,
+          "fingerprint": 4920
+        },
+        {
+          "cached": false,
+          "ms_per_pass": 0.19018525,
+          "fingerprint": 4920
+        },
+        {
+          "cached": false,
+          "ms_per_pass": 0.1931597,
+          "fingerprint": 4920
+        },
+        {
+          "cached": true,
+          "ms_per_pass": 0.10257014999999998,
+          "fingerprint": 4920
+        },
+        {
+          "cached": true,
+          "ms_per_pass": 0.096823,
+          "fingerprint": 4920
+        },
+        {
+          "cached": false,
+          "ms_per_pass": 0.18919325,
+          "fingerprint": 4920
+        },
+        {
+          "cached": false,
+          "ms_per_pass": 0.1872538,
+          "fingerprint": 4920
+        },
+        {
+          "cached": true,
+          "ms_per_pass": 0.09998975,
+          "fingerprint": 4920
+        }
+      ]
+    }
+  }
+}

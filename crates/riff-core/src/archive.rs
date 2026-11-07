@@ -427,6 +427,27 @@ struct ArchiveMember {
     is_file: bool,
 }
 
+pub(crate) fn is_metadata_path(path: &str) -> bool {
+    let normalized = path.replace('\\', "/");
+    let top = normalized
+        .trim_start_matches('/')
+        .split('/')
+        .next()
+        .unwrap_or("");
+    top.starts_with("._")
+        || matches!(
+            top,
+            ".DS_Store"
+                | "__MACOSX"
+                | ".AppleDouble"
+                | ".fseventsd"
+                | ".Spotlight-V100"
+                | ".Trashes"
+        )
+        || top.eq_ignore_ascii_case("thumbs.db")
+        || top.eq_ignore_ascii_case("desktop.ini")
+}
+
 fn locate_composer_json(members: &[ArchiveMember]) -> Result<Option<String>, ComposerArchiveError> {
     if members.is_empty() {
         return Ok(None);
@@ -441,7 +462,7 @@ fn locate_composer_json(members: &[ArchiveMember]) -> Result<Option<String>, Com
 
     let top_level_paths: BTreeSet<String> = members
         .iter()
-        .filter(|member| !member.path.contains("__MACOSX"))
+        .filter(|member| !is_metadata_path(&member.path))
         .filter_map(top_level_path)
         .collect();
 

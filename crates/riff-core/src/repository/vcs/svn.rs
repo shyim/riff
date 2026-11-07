@@ -109,7 +109,7 @@ impl<P: SvnProcess> Svn<P> {
             if output.success {
                 return Ok(output.stdout);
             }
-            let message = combined_output(&output);
+            let message = crate::process::redact_command(&combined_output(&output));
             if !is_authentication_failure(&message) {
                 return Err(VcsDriverError::ProcessError(message));
             }
@@ -331,15 +331,7 @@ fn sanitize_url(url: &str) -> String {
 }
 
 fn sanitize_text(message: &str) -> String {
-    let mut words = message.split_whitespace().peekable();
-    let mut sanitized = Vec::new();
-    while let Some(word) = words.next() {
-        sanitized.push(word.to_owned());
-        if word == "--password" && words.next().is_some() {
-            sanitized.push("***".to_owned());
-        }
-    }
-    sanitized.join(" ")
+    crate::process::redact_command(message)
 }
 
 #[cfg(test)]

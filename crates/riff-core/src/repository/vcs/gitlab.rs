@@ -68,10 +68,10 @@ struct GitLabApiResponse {
 /// GitLab driver for GitLab repositories.
 pub struct GitLabDriver {
     url: String,
-    api_host: String,
     project_path: String,
     api_url: String,
     private_token: Option<String>,
+    auth: Option<AuthConfig>,
     request_options: GitLabRequestOptions,
     protocol: GitLabProtocol,
     default_branch: Option<String>,
@@ -101,10 +101,10 @@ impl GitLabDriver {
 
         Ok(Self {
             url: location.web_url,
-            api_host: location.host,
             project_path: location.project_path,
             api_url,
             private_token: None,
+            auth: None,
             request_options: GitLabRequestOptions::default(),
             protocol: GitLabProtocol::Auto,
             default_branch: None,
@@ -121,11 +121,7 @@ impl GitLabDriver {
     }
 
     pub fn with_auth(mut self, auth: &AuthConfig) -> Self {
-        if let Some(token) = auth.get_gitlab_token(&self.api_host) {
-            self.private_token = Some(token.to_string());
-        } else if let Some(token) = auth.get_gitlab_token("gitlab.com") {
-            self.private_token = Some(token.to_string());
-        }
+        self.auth = Some(auth.clone());
         self
     }
 
@@ -264,11 +260,18 @@ impl GitLabDriver {
 
     fn send_api_url(&self, url: &str) -> Result<GitLabApiResponse, VcsDriverError> {
         let client = reqwest::blocking::Client::builder()
+            .redirect(crate::http::authenticated_redirect_policy())
             .tls_danger_accept_invalid_certs(!self.request_options.verify_tls)
             .build()
             .map_err(|error| VcsDriverError::Network(error.to_string()))?;
         let mut request = client.get(url);
-        if let Some(token) = &self.private_token {
+        if let Some(auth) = &self.auth {
+            let options = crate::http::authentication_options(auth, url, url, &[])
+                .map_err(|error| VcsDriverError::Network(error.to_string()))?;
+            for header in options.headers() {
+                request = request.header(header.name(), header.value().clone());
+            }
+        } else if let Some(token) = &self.private_token {
             request = request.header("PRIVATE-TOKEN", token);
         }
         let response = request

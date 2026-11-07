@@ -59,6 +59,8 @@ pub struct HttpBasicCredentials {
 pub enum GitLabAuth {
     /// Simple private token
     Token(String),
+    /// Deploy token or CI job token.
+    Credentials { username: String, token: String },
     /// OAuth token with explicit key
     OAuth {
         #[serde(rename = "oauth-token")]
@@ -71,6 +73,7 @@ impl GitLabAuth {
     pub fn token(&self) -> &str {
         match self {
             GitLabAuth::Token(t) => t,
+            GitLabAuth::Credentials { token, .. } => token,
             GitLabAuth::OAuth { oauth_token } => oauth_token,
         }
     }
@@ -88,6 +91,12 @@ pub struct BitbucketOAuthCredentials {
 /// Complete authentication configuration
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AuthConfig {
+    #[serde(
+        rename = "custom-headers",
+        default,
+        skip_serializing_if = "HashMap::is_empty"
+    )]
+    pub custom_headers: HashMap<String, serde_json::Value>,
     /// HTTP Basic authentication by domain
     #[serde(
         rename = "http-basic",
@@ -209,6 +218,7 @@ impl AuthConfig {
         for (domain, creds) in other.http_basic {
             self.http_basic.insert(domain, creds);
         }
+        self.custom_headers.extend(other.custom_headers);
         for (domain, token) in other.bearer {
             self.bearer.insert(domain, token);
         }
@@ -354,7 +364,8 @@ impl AuthConfig {
 
     /// Check if config is empty (no credentials stored)
     pub fn is_empty(&self) -> bool {
-        self.http_basic.is_empty()
+        self.custom_headers.is_empty()
+            && self.http_basic.is_empty()
             && self.bearer.is_empty()
             && self.github_oauth.is_empty()
             && self.gitlab_oauth.is_empty()
@@ -401,7 +412,8 @@ impl AuthConfig {
     /// Whether any supported authentication kind is configured for an origin.
     pub fn has_authentication(&self, origin: &str) -> bool {
         let origin = normalize_origin(origin);
-        self.http_basic.contains_key(&origin)
+        self.custom_headers.contains_key(&origin)
+            || self.http_basic.contains_key(&origin)
             || self.bearer.contains_key(&origin)
             || self.github_oauth.contains_key(&origin)
             || self.gitlab_oauth.contains_key(&origin)

@@ -348,19 +348,17 @@ impl Policy {
         platform_packages: &[Package],
         ignore_platform_requirements: bool,
     ) -> Option<PackageId> {
+        let mut platform_matcher = PlatformRequirementMatcher::new(platform_packages);
         let compatible = candidates
             .iter()
             .copied()
             .filter(|&id| {
                 ignore_platform_requirements
                     || pool.entry(id).is_some_and(|entry| {
-                        dependency_map_matches_platform(
-                            match entry {
-                                PoolEntry::Package(package) => &package.require,
-                                PoolEntry::Alias(alias) => alias.require(),
-                            },
-                            platform_packages,
-                        )
+                        platform_matcher.matches_dependencies(match entry {
+                            PoolEntry::Package(package) => &package.require,
+                            PoolEntry::Alias(alias) => alias.require(),
+                        })
                     })
             })
             .collect::<Vec<_>>();
@@ -468,6 +466,60 @@ impl Policy {
     }
 }
 
+/// Reuses platform requirement checks across candidates in a single selection.
+/// The borrowed platform is immutable; no results survive into another project or runtime.
+pub struct PlatformRequirementMatcher<'a> {
+    platform: &'a [Package],
+    results: HashMap<String, HashMap<String, bool>>,
+    consecutive_misses: usize,
+}
+
+impl<'a> PlatformRequirementMatcher<'a> {
+    pub fn new(platform: &'a [Package]) -> Self {
+        Self {
+            platform,
+            results: HashMap::new(),
+            consecutive_misses: 0,
+        }
+    }
+
+    pub fn matches(&mut self, package: &Package) -> bool {
+        self.matches_dependencies(&package.require)
+    }
+
+    fn matches_dependencies(&mut self, requirements: &DependencyMap) -> bool {
+        requirements
+            .iter()
+            .filter(|(name, _)| is_platform_package(name))
+            .all(|(name, constraint)| {
+                // Unique constraints cannot benefit from memoization. Bound the trial
+                // and release its allocations after 64 consecutive misses.
+                if self.consecutive_misses >= 64 {
+                    return platform_requirement_matches(name, constraint, self.platform);
+                }
+                if let Some(result) = self
+                    .results
+                    .get(name.as_str())
+                    .and_then(|values| values.get(constraint.as_str()))
+                {
+                    self.consecutive_misses = 0;
+                    return *result;
+                }
+                self.consecutive_misses += 1;
+                let result = platform_requirement_matches(name, constraint, self.platform);
+                if self.consecutive_misses == 64 {
+                    self.results = HashMap::new();
+                    return result;
+                }
+                self.results
+                    .entry(name.to_string())
+                    .or_default()
+                    .insert(constraint.to_string(), result);
+                result
+            })
+    }
+}
+
 /// Whether a package can be installed with the supplied platform packages.
 pub fn package_matches_platform_requirements(
     package: &Package,
@@ -480,25 +532,31 @@ fn dependency_map_matches_platform(
     requirements: &DependencyMap,
     platform_packages: &[Package],
 ) -> bool {
-    let parser = VersionParser::new();
     requirements
         .iter()
         .filter(|(name, _)| is_platform_package(name))
-        .all(|(name, constraint)| {
-            let Some(platform) = platform_packages
-                .iter()
-                .find(|package| package.name.eq_ignore_ascii_case(name))
-            else {
-                return false;
-            };
-            let Ok(constraint) = parser.parse_constraints(constraint) else {
-                return false;
-            };
-            let normalized = parser
-                .normalize(&platform.version)
-                .unwrap_or_else(|_| platform.version.to_string());
-            constraint.matches_normalized_version(&normalized)
-        })
+        .all(|(name, constraint)| platform_requirement_matches(name, constraint, platform_packages))
+}
+
+fn platform_requirement_matches(
+    name: &str,
+    constraint: &str,
+    platform_packages: &[Package],
+) -> bool {
+    let Some(platform) = platform_packages
+        .iter()
+        .find(|package| package.name.eq_ignore_ascii_case(name))
+    else {
+        return false;
+    };
+    let parser = VersionParser::new();
+    let Ok(constraint) = parser.parse_constraints(constraint) else {
+        return false;
+    };
+    let normalized = parser
+        .normalize(&platform.version)
+        .unwrap_or_else(|_| platform.version.to_string());
+    constraint.matches_normalized_version(&normalized)
 }
 
 /// Build Composer's concise constraint recommendation for a selected package.
@@ -513,7 +571,9 @@ pub fn recommended_require_constraint(package: &Package, php_version: Option<&st
 
     if !package.is_dev() {
         return transform_recommended_version(
-            &package.version,
+            &VersionParser::new()
+                .normalize(&package.version)
+                .unwrap_or_else(|_| package.version.to_string()),
             package.pretty_version(),
             package.stability(),
         );

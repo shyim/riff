@@ -990,6 +990,10 @@
                     "type": "string",
                     "description": "Optional string to be used as a suffix for the generated Composer autoloader. When null a random one will be generated."
                 },
+                "strict-psr-autoloader": {
+                    "type": "boolean",
+                    "description": "Fail on root PSR autoloading violations; requires optimized autoloading."
+                },
                 "optimize-autoloader": {
                     "type": "boolean",
                     "description": "Always optimize when dumping the autoloader."

@@ -247,9 +247,10 @@ pub enum AutoloadGenerationEvent {
     PostGenerate,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AutoloadGenerationResult {
     pub class_count: usize,
+    pub psr_violations: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -530,8 +531,13 @@ impl AutoloadGenerator {
         root_autoload: Option<&Autoload>,
         root_package: Option<&RootPackageInfo>,
     ) -> Result<()> {
-        self.generate_with_result(packages, root_autoload, root_package)
-            .map(|_| ())
+        let result = self.generate_with_result(packages, root_autoload, root_package)?;
+        if !result.psr_violations.is_empty() {
+            return Err(crate::RiffError::InstallationFailed(
+                result.psr_violations.join("\n"),
+            ));
+        }
+        Ok(())
     }
 
     /// Generate an autoloader and return the observable generation summary.
@@ -606,9 +612,11 @@ impl AutoloadGenerator {
         files.retain(|(_, path)| seen_files.insert(path.clone()));
 
         // Generate authoritative classmap if optimizing
-        if self.config.optimize || self.config.authoritative {
-            self.generate_optimized_classmap(&psr4, &psr0, &mut classmap, &exclude_patterns)?;
-        }
+        let psr_violations = if self.config.optimize || self.config.authoritative {
+            self.generate_optimized_classmap(&psr4, &psr0, &mut classmap, &exclude_patterns)?
+        } else {
+            Vec::new()
+        };
 
         // Add Composer\InstalledVersions to classmap
         classmap.insert(
@@ -650,6 +658,7 @@ impl AutoloadGenerator {
 
         Ok(AutoloadGenerationResult {
             class_count: classmap.len(),
+            psr_violations,
         })
     }
 
@@ -861,7 +870,7 @@ impl AutoloadGenerator {
         psr0: &BTreeMap<String, Vec<String>>,
         classmap: &mut BTreeMap<String, String>,
         exclude_patterns: &[Regex],
-    ) -> Result<()> {
+    ) -> Result<Vec<String>> {
         let mut violations = Vec::new();
         // Scan PSR-4 directories
         for (namespace, paths) in psr4 {
@@ -871,7 +880,9 @@ impl AutoloadGenerator {
                     let classes = self.scan_classes(Path::new(&path), exclude_patterns)?;
                     for (class_name, file_path) in classes {
                         if !class_matches_psr4(namespace, &path, &class_name, &file_path) {
-                            if self.options.strict_psr {
+                            if self.options.strict_psr
+                                && !file_path.starts_with(&self.config.vendor_dir)
+                            {
                                 violations.push(psr_violation(
                                     "psr-4",
                                     namespace,
@@ -897,7 +908,9 @@ impl AutoloadGenerator {
                     let classes = self.scan_classes(Path::new(&path), exclude_patterns)?;
                     for (class_name, file_path) in classes {
                         if !class_matches_psr0(namespace, &path, &class_name, &file_path) {
-                            if self.options.strict_psr {
+                            if self.options.strict_psr
+                                && !file_path.starts_with(&self.config.vendor_dir)
+                            {
                                 violations.push(psr_violation(
                                     "psr-0",
                                     namespace,
@@ -916,10 +929,7 @@ impl AutoloadGenerator {
             }
         }
 
-        if !violations.is_empty() {
-            return Err(crate::RiffError::InstallationFailed(violations.join("\n")));
-        }
-        Ok(())
+        Ok(violations)
     }
 
     /// Extract actual filesystem path from PHP code like "$vendorDir . '/path'"

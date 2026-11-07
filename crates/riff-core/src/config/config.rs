@@ -183,6 +183,10 @@ pub struct HttpBasicAuth {
 #[serde(untagged)]
 pub enum GitLabToken {
     Token(String),
+    Credentials {
+        username: String,
+        token: String,
+    },
     OAuth {
         #[serde(rename = "oauth-token")]
         oauth_token: String,
@@ -271,6 +275,10 @@ pub struct Config {
 
     #[serde(rename = "optimize-autoloader", default)]
     pub optimize_autoloader: bool,
+
+    /// Fail on root PSR autoloading violations when optimizing.
+    #[serde(rename = "strict-psr-autoloader", default)]
+    pub strict_psr_autoloader: bool,
 
     #[serde(rename = "sort-packages", default)]
     pub sort_packages: bool,
@@ -406,7 +414,7 @@ pub struct Config {
     pub bin_compat: String,
 
     #[serde(rename = "custom-headers", default)]
-    pub custom_headers: HashMap<String, String>,
+    pub custom_headers: HashMap<String, serde_json::Value>,
 
     #[serde(rename = "client-certificate", default)]
     pub client_certificate: HashMap<String, serde_json::Value>,
@@ -517,6 +525,7 @@ impl Default for Config {
             notify_on_install: true,
             discard_changes: DiscardChanges::default(),
             optimize_autoloader: false,
+            strict_psr_autoloader: false,
             sort_packages: false,
             classmap_authoritative: false,
             apcu_autoloader: false,
@@ -1005,6 +1014,12 @@ impl Config {
                     self.sources.insert(key.to_string(), source);
                 }
             }
+            "strict-psr-autoloader" => {
+                if let Some(b) = value.as_bool() {
+                    self.strict_psr_autoloader = b;
+                    self.sources.insert(key.to_string(), source);
+                }
+            }
             "optimize-autoloader" => {
                 if let Some(b) = value.as_bool() {
                     self.optimize_autoloader = b;
@@ -1370,6 +1385,7 @@ impl Config {
             "discard-changes".to_string(),
             "autoloader-suffix".to_string(),
             "optimize-autoloader".to_string(),
+            "strict-psr-autoloader".to_string(),
             "sort-packages".to_string(),
             "classmap-authoritative".to_string(),
             "apcu-autoloader".to_string(),

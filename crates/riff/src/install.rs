@@ -82,6 +82,10 @@ pub struct InstallArgs {
     #[usage(short = 'o', long)]
     pub optimize_autoloader: bool,
 
+    /// Fail on root PSR violations (requires optimized autoloading)
+    #[usage(long)]
+    pub strict_psr_autoloader: bool,
+
     /// Use authoritative classmap (only load from classmap)
     #[usage(short = 'a', long)]
     pub classmap_authoritative: bool,
@@ -258,6 +262,7 @@ pub async fn execute(args: InstallArgs, context: &CommandContext) -> Result<i32>
         installer
             .update(UpdateOptions {
                 optimize_autoloader: args.optimize_autoloader || configured_optimize,
+                strict_psr_autoloader: args.strict_psr_autoloader,
                 classmap_authoritative: args.classmap_authoritative || configured_authoritative,
                 apcu_autoloader: args.apcu_autoloader
                     || args.apcu_autoloader_prefix.is_some()
@@ -278,6 +283,7 @@ pub async fn execute(args: InstallArgs, context: &CommandContext) -> Result<i32>
         installer
             .install(InstallOptions {
                 optimize_autoloader: args.optimize_autoloader || configured_optimize,
+                strict_psr_autoloader: args.strict_psr_autoloader,
                 classmap_authoritative: args.classmap_authoritative || configured_authoritative,
                 apcu_autoloader: args.apcu_autoloader
                     || args.apcu_autoloader_prefix.is_some()
@@ -391,6 +397,7 @@ pub(crate) async fn reconcile_after_patch(
             no_security_blocking: false,
             no_blocking: false,
             optimize_autoloader: false,
+            strict_psr_autoloader: false,
             classmap_authoritative: false,
             apcu_autoloader: false,
             apcu_autoloader_prefix: None,

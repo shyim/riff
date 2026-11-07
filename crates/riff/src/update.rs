@@ -122,6 +122,10 @@ pub struct UpdateArgs {
     #[usage(short = 'o', long)]
     pub optimize_autoloader: bool,
 
+    /// Fail on root PSR violations (requires optimized autoloading)
+    #[usage(long)]
+    pub strict_psr_autoloader: bool,
+
     /// Use authoritative classmaps
     #[usage(short = 'a', long)]
     pub classmap_authoritative: bool,
@@ -336,6 +340,7 @@ pub async fn execute(args: UpdateArgs, context: &CommandContext) -> Result<i32> 
     let result = installer
         .update_with_result(UpdateOptions {
             optimize_autoloader: args.optimize_autoloader || configured_optimize,
+            strict_psr_autoloader: args.strict_psr_autoloader,
             classmap_authoritative: args.classmap_authoritative || configured_authoritative,
             apcu_autoloader: args.apcu_autoloader
                 || args.apcu_autoloader_prefix.is_some()

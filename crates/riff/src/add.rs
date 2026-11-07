@@ -13,7 +13,7 @@ use riff_core::{
     json::{RiffLockfile, RiffManifest},
     package::Package,
     policy_config::PolicyEnvironment,
-    solver::{package_matches_platform_requirements, recommended_require_constraint},
+    solver::{recommended_require_constraint, PlatformRequirementMatcher},
     Riff, RiffBuilder,
 };
 use riff_semver::{Semver, VersionParser};
@@ -269,7 +269,7 @@ pub async fn execute(args: AddArgs, context: &CommandContext) -> Result<i32> {
 
     // Write updated composer.json
     if !args.dry_run {
-        riff_core::json::write_json_value(&json_path, &riff.manifest, true)
+        riff_core::json::write_manifest_update(&json_path, &riff.manifest)
             .context("Failed to write composer.json")?;
     } else {
         riff_core::outln!(
@@ -683,16 +683,16 @@ pub(crate) fn select_recommended_package<'a>(
     packages: &'a [std::sync::Arc<Package>],
     platform_packages: &[Package],
 ) -> Option<&'a Package> {
+    let mut platform_matcher = PlatformRequirementMatcher::new(platform_packages);
     let best_stability = packages
         .iter()
-        .filter(|package| package_matches_platform_requirements(package, platform_packages))
+        .filter(|package| platform_matcher.matches(package))
         .map(|package| package.stability().priority())
         .min()?;
     let eligible: Vec<_> = packages
         .iter()
         .filter(|package| {
-            package.stability().priority() == best_stability
-                && package_matches_platform_requirements(package, platform_packages)
+            package.stability().priority() == best_stability && platform_matcher.matches(package)
         })
         .collect();
     let versions: Vec<_> = eligible

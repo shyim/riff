@@ -144,3 +144,18 @@ To finish porting another Composer installer fixture:
 The harness compares logical install/update/remove operations, selected lock
 packages and requested metadata subsets. This keeps tests stable across harmless
 output and extra lock metadata differences.
+
+## Composer 2.11 regression comparison
+
+With a bootstrapped Composer 2.11.1 checkout and a freshly built candidate:
+
+```sh
+COMPOSER_SRC_DIR=/path/to/composer-2.11.1 python3 scripts/composer-211-differential.py
+```
+
+This offline comparison uses isolated project, home, and cache directories. Its
+13 cases include strict PSR exit codes, generated files, and post-autoload script
+ordering for install, update, and dump-autoload, via both flags and configuration.
+Core
+security, archive, authentication, and platform-matcher regressions can be run with
+`cargo test -p riff-core --test composer_211`.

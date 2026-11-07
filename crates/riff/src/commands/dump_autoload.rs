@@ -54,7 +54,7 @@ pub struct DumpAutoloadArgs {
     pub working_dir: PathBuf,
 }
 
-pub async fn execute(args: DumpAutoloadArgs, context: &CommandContext) -> Result<i32> {
+pub async fn execute(mut args: DumpAutoloadArgs, context: &CommandContext) -> Result<i32> {
     let working_dir = args
         .working_dir
         .canonicalize()
@@ -82,6 +82,7 @@ pub async fn execute(args: DumpAutoloadArgs, context: &CommandContext) -> Result
 
     // Load config
     let config = Config::build(Some(&working_dir), true)?;
+    args.strict_psr |= config.strict_psr_autoloader;
     let optimize = args.optimize || config.optimize_autoloader;
     let authoritative = args.classmap_authoritative || config.classmap_authoritative;
     validate_options(&args, optimize, authoritative)?;

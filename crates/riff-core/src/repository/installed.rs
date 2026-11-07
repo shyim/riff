@@ -76,13 +76,14 @@ impl InstalledRepository {
             dev,
             dev_package_names,
         } = data;
-        let mut packages = self.packages.write().await;
-        packages.clear();
-
+        let mut loaded = HashMap::new();
         for pkg_data in installed_packages {
             let package = Package::from_installed_json(&pkg_data);
-            packages.insert(package.name.clone(), Arc::new(package));
+            crate::package::validate_installed_package(&package)
+                .map_err(|error| format!("Invalid installed.json: {error}"))?;
+            loaded.insert(package.name.clone(), Arc::new(package));
         }
+        *self.packages.write().await = loaded;
         let mut installed_dev_packages = self.dev_package_names.write().await;
         *installed_dev_packages = dev_package_names
             .into_iter()
@@ -106,11 +107,15 @@ impl InstalledRepository {
         let data: TransactionInstalledJson<'_> = serde_json::from_slice(&content)
             .map_err(|e| format!("Failed to parse installed.json: {}", e))?;
 
-        Ok(data
-            .packages
+        data.packages
             .into_iter()
-            .map(|package| Arc::new(package.into_package()))
-            .collect())
+            .map(|package| {
+                let package = package.into_package();
+                crate::package::validate_installed_package(&package)
+                    .map_err(|error| format!("Invalid installed.json: {error}"))?;
+                Ok(Arc::new(package))
+            })
+            .collect()
     }
 
     /// Get the vendor directory path
@@ -1104,7 +1109,7 @@ mod tests {
         std::fs::write(
             composer_dir.join("installed.json"),
             r#"[{
-                "name": "package1",
+                "name": "vendor/package1",
                 "version": "1.0.0-beta",
                 "type": "vendor"
             }]"#,
@@ -1116,7 +1121,7 @@ mod tests {
         let packages = repository.get_packages().await;
 
         assert_eq!(packages.len(), 1);
-        assert_eq!(packages[0].name, "package1");
+        assert_eq!(packages[0].name, "vendor/package1");
         assert_eq!(packages[0].version, "1.0.0.0-beta");
         assert_eq!(packages[0].package_type, "vendor");
         assert!(!repository.is_dirty());

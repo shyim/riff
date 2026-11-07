@@ -113,3 +113,25 @@ Before replacing Composer for a project:
 Report a compatibility gap with a minimal `composer.json`, lock information if
 relevant, the Riff version, platform details, exact command, and complete
 error output.
+
+## Composer 2.11 follow-up
+
+The 2.11.0/2.11.1 follow-up validates installed metadata before package operations,
+omits HTTP transport headers from lockfiles, redacts VCS credentials, preserves
+quoted nested script arguments, ignores top-level archive metadata when unwrapping,
+and preserves pre-existing empty dependency sections. Authentication and WSL cache
+behavior are described in [Configuration](configuration.md).
+
+Riff preserves JSON lists when deleting numeric entries, including nested lists.
+Composer 2.11.1 still turns some nested lists into objects with numeric keys through
+its JSON manipulator fast path; Riff deliberately keeps the list shape. The offline
+[2.11 differential script](../scripts/composer-211-differential.py) covers the shared
+array fallback, dependency mutation, and quoted-script contracts.
+
+Strict PSR autoloading is supported through `config.strict-psr-autoloader` and
+install/update's `--strict-psr-autoloader` flag. Optimized generation writes the
+autoloader and runs post-autoload scripts before reporting root PSR violations
+(exit 6 for install/update, exit 1 for dump-autoload). Vendor violations are excluded.
+Inferred pre-1.0 requirements use Composer's caret constraints.
+The TLS warning names Riff rather than Composer; this does not imply complete
+command-output or feature parity.

@@ -86,6 +86,7 @@ pub struct RiffBuilder {
     manifest: Option<RiffManifest>,
     lockfile: Option<RiffLockfile>,
     http_client: Option<Arc<HttpClient>>,
+    auth: Option<crate::config::AuthConfig>,
     repository_manager: Option<RepositoryManager>,
     additional_repositories: Vec<Arc<dyn Repository>>,
     session: Option<RiffSession>,
@@ -122,6 +123,7 @@ impl RiffBuilder {
             manifest: None,
             lockfile: None,
             http_client: None,
+            auth: None,
             repository_manager: None,
             additional_repositories: Vec::new(),
             session: None,
@@ -154,6 +156,12 @@ impl RiffBuilder {
 
     pub fn with_lockfile(mut self, lockfile: Option<RiffLockfile>) -> Self {
         self.lockfile = lockfile;
+        self
+    }
+
+    /// Override authentication without reading auth.json or COMPOSER_AUTH.
+    pub fn with_auth(mut self, auth: crate::config::AuthConfig) -> Self {
+        self.auth = Some(auth);
         self
     }
 
@@ -308,9 +316,23 @@ impl RiffBuilder {
                 builder.build()?
             }
         };
-        let http_client = session.http_client();
+        let auth = match self.auth.take() {
+            Some(auth) => auth,
+            None => {
+                let mut auth: crate::config::AuthConfig =
+                    serde_json::from_value(serde_json::to_value(&config)?)?;
+                auth.merge(crate::config::AuthConfig::build(Some(&self.working_dir))?);
+                auth
+            }
+        };
+        let shared_client = session.http_client();
+        let http_client = if auth.is_empty() {
+            shared_client
+        } else {
+            Arc::new((*shared_client).clone().with_auth(auth.clone()))
+        };
 
-        let repository_manager = self.build_repository_manager(&manifest, &session)?;
+        let repository_manager = self.build_repository_manager(&manifest, &session, &auth)?;
         let install_config = self.build_install_config(&config, &session);
         let plugin_manager =
             PluginManager::builtins(self.plugins_enabled, config.allow_plugins.clone())?;
@@ -352,12 +374,15 @@ impl RiffBuilder {
         &mut self,
         manifest: &RiffManifest,
         session: &RiffSession,
+        auth: &crate::config::AuthConfig,
     ) -> Result<RepositoryManager> {
         if let Some(manager) = self.repository_manager.take() {
             return Ok(manager.with_output(self.output.clone()));
         }
 
-        let mut repository_manager = RepositoryManager::new().with_output(self.output.clone());
+        let mut repository_manager = RepositoryManager::new()
+            .with_output(self.output.clone())
+            .with_auth(auth.clone());
 
         for repo in manifest.repositories.as_vec() {
             if repository_is_pear(&repo) {
@@ -379,7 +404,16 @@ impl RiffBuilder {
             .unwrap_or_else(|| is_packagist_disabled(&manifest.repositories));
 
         if !packagist_disabled {
-            repository_manager.add_repository(session.packagist_repository());
+            if auth
+                .find_auth_origin("https://repo.packagist.org")
+                .is_some()
+            {
+                let mut repository = crate::repository::ComposerRepository::packagist();
+                repository.set_auth(auth.clone());
+                repository_manager.add_repository(Arc::new(repository));
+            } else {
+                repository_manager.add_repository(session.packagist_repository());
+            }
         }
 
         Ok(repository_manager)
@@ -423,6 +457,7 @@ impl Clone for RiffBuilder {
             manifest: self.manifest.clone(),
             lockfile: self.lockfile.clone(),
             http_client: self.http_client.clone(),
+            auth: self.auth.clone(),
             repository_manager: None, // RepositoryManager doesn't implement Clone
             additional_repositories: self.additional_repositories.clone(),
             session: self.session.clone(),
